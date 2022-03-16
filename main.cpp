@@ -45,7 +45,7 @@ int main(int, char**) {
     cout << "test" << endl;
 
     vector<ParticleD3> A;
-    point_sample<Eigen::MatrixXd, Eigen::MatrixXi, vector<ParticleD3>>(V, T, A);
+    point_sample(V, T, A);
 
     cout << "------------" << endl;
     // Interpolate the frame field
