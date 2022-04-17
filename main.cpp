@@ -24,7 +24,7 @@
 #include "barycentric_to_cartesian.h"
 #include <unistd.h>
 #include "omp.h"
-#include "LBFGS_Opt.h"
+// #include "LBFGS_Opt.h"
 
 // Input frame field constraints
 
@@ -101,12 +101,12 @@ int main(int, char**) {
 
     double l = igl::avg_edge_length(V, T);
     vector<ParticleD> A;
-    point_sample(V, T, A, 0.2*l);
+    point_sample(V, T, A, l);
 
-    Eigen::MatrixX3d points;
+    Eigen::MatrixXd points;
     barycentric_to_cartesian(V, T, A, points);
 
-    LBFGS_optimization(l, V, T, FF0, FF1, FF2, A);
+    // LBFGS_optimization(l, V, T, FF0, FF1, FF2, A);
 
 
     MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
@@ -124,6 +124,8 @@ int main(int, char**) {
                             trace_points.block(1, 0, trace_points.rows() - 1, 3),
                             Eigen::RowVector3d(1.0, 0, 0));
     viewer.data().add_edges(debug_point_a, debug_point_b, Eigen::RowVector3d(0, 1, 0));
+
+
 
     MatrixXi T_tmp(T.rows() * 4, 3);
     for (int i = 0; i < T.rows(); i++) {

@@ -9,7 +9,7 @@ using namespace Eigen;
 // ti #p by 1
 // B #p by 4
 // P #p by 3
-void barycentric_to_cartesian(const MatrixXd &V, const MatrixXi &T, const vector<ParticleD> &A, MatrixX3d &P) {
+void barycentric_to_cartesian(const MatrixXd &V, const MatrixXi &T, const vector<ParticleD> &A, MatrixXd &P) {
     std::cout << "Converting from barycentric to cartecian" << std::endl;
 
     P.resize(A.size(), 3);
