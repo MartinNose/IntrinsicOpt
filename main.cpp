@@ -11,61 +11,141 @@
 #include <igl/local_basis.h>
 #include <igl/readDMAT.h>
 #include <igl/readOBJ.h>
+#include <igl/readMSH.h>
 #include <igl/rotate_vectors.h>
 #include <igl/copyleft/comiso/nrosy.h>
 #include <igl/copyleft/comiso/miq.h>
 #include <igl/copyleft/comiso/frame_field.h>
+#include "readVTK.h"
 #include <igl/opengl/glfw/Viewer.h>
 #include <igl/PI.h>
+#include "trace.h"
 #include "point_sample.h"
-
-Eigen::MatrixXd V;
-Eigen::MatrixXi T;
-
-Eigen::MatrixXd B;
+#include "barycentric_to_cartesian.h"
+#include <unistd.h>
+#include "omp.h"
 
 // Input frame field constraints
-Eigen::VectorXi b;
-Eigen::MatrixXd bc1;
-Eigen::MatrixXd bc2;
-
-// Interpolated frame field
-Eigen::MatrixXd FF1, FF2;
-
-igl::opengl::glfw::Viewer viewer;
 
 using namespace std;
 
+#define datapath "../dataset/"
+
+Eigen::MatrixXd V;
+Eigen::MatrixXi T;
+igl::opengl::glfw::Viewer viewer;
+Eigen::MatrixX3d trace_points;
+Eigen::MatrixX3d debug_point_a;
+Eigen::MatrixX3d debug_point_b;
+
+
+void stepCallback(const ParticleD& target, double stepLen, double total) {
+    static unsigned int cnt = 0;
+    cout << "---------------------" << endl;
+    cout << cnt++ << "th Particle Position: \nCell_id: " << target.cell_id << endl;
+    cout << "BC: " << target.bc << endl;
+
+    int col = target.bc.cols();
+    Eigen::Matrix<double, Dynamic, 3> Cell(col, 3);
+    for (int i = 0; i < col; i++) {
+        Cell.row(i) = V.row(T.row(target.cell_id)(i));
+    }
+
+    Eigen::Vector3d endPoint = target.bc * Cell;
+
+    cout << "new Start Point: " << endPoint.transpose() << endl;
+
+    trace_points.conservativeResize(trace_points.rows() + 1, 3);
+    trace_points.row(trace_points.rows() - 1) << endPoint.transpose();
+
+    cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
+    debug_point_a.conservativeResize(debug_point_a.rows() + 6,3);
+    debug_point_b.conservativeResize(debug_point_b.rows() + 6,3);
+
+    debug_point_a.row(debug_point_a.rows() - 1) << Cell.row(0);
+    debug_point_a.row(debug_point_a.rows() - 2) << Cell.row(0);
+    debug_point_a.row(debug_point_a.rows() - 3) << Cell.row(0);
+    debug_point_a.row(debug_point_a.rows() - 4) << Cell.row(1);
+    debug_point_a.row(debug_point_a.rows() - 5) << Cell.row(1);
+    debug_point_a.row(debug_point_a.rows() - 6) << Cell.row(2);
+
+    debug_point_b.row(debug_point_a.rows() - 1) << Cell.row(1);
+    debug_point_b.row(debug_point_a.rows() - 2) << Cell.row(2);
+    debug_point_b.row(debug_point_a.rows() - 3) << Cell.row(3);
+    debug_point_b.row(debug_point_a.rows() - 4) << Cell.row(2);
+    debug_point_b.row(debug_point_a.rows() - 5) << Cell.row(3);
+    debug_point_b.row(debug_point_a.rows() - 6) << Cell.row(3);
+
+}
+
+void callback(const ParticleD& target, double stepLen, double total) {
+        stepCallback(target, stepLen, total);
+}
+
 int main(int, char**) {
-    std::string datapath = "./dataset/example1/";
-    igl::readOBJ(datapath + "bumpy-cube.obj", V, T);
+
+    readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
+
     Eigen::MatrixXd temp;
-    igl::readDMAT(datapath + "bumpy-cube.dmat",temp);
+    // igl::readOBJ(datapath "bumpy-cube.obj", V, T);
+    // igl:readMSH(datapath "t13_data.msh", V, T);
 
-    cout << "test" << endl;
+    // Eigen::MatrixXd V(4, 3);
+    // Eigen::MatrixXi T(1, 4)
 
-    vector<ParticleD3> A;
-    point_sample(V, T, A);
+    double l = igl::avg_edge_length(V, T);
+    // vector<ParticleD> A;
+    // //point_sample(V, T, A, 0.2*l);
 
-    cout << "------------" << endl;
-    // Interpolate the frame field
-    Eigen::read_binary((datapath + "FF1.dat").c_str(), FF1);
-    Eigen::read_binary((datapath + "FF2.dat").c_str(), FF2);
-    cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
-    cout << "T rows: " << T.rows() << " cols: " << T.cols() << endl;
+    // MatrixXi ti(A.size(), 1);
+    // MatrixX4d B(A.size(), 4);
 
-    cout << "FF1 rows: " << FF1.rows() << " cols: " << FF1.cols() << endl;
-    cout << "FF2 rows: " << FF2.rows() << " cols: " << FF2.cols() << endl;
+    // #pragma omp parallel for
+    // for (int i = 0; i < A.size(); i++) {
+    //     ti.row(i) << A[i].cell_id;
+    //     B.row(i) = A[i].bc;
+    // }
 
-    igl::barycenter(V, T, B);
+    // barycentric_to_cartesian(V, T, ti, B, points);
 
-    double global_scale =  .05*igl::avg_edge_length(V, T);
+    MatrixXd FF0 = MatrixXd::Zero(T.rows(), 3);
+    MatrixXd FF1 = MatrixXd::Zero(T.rows(), 3);
+    MatrixXd FF2 = MatrixXd::Zero(T.rows(), 3);
 
-    viewer.data().set_mesh(V, T);
+    MatrixXd ones = MatrixXd::Constant(T.rows(), 1, 1.0);
+
+
+    FF0.col(0) = ones;
+    FF1.col(1) = ones;
+    FF2.col(2) = ones;
+
+    MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
+
+    // MatrixX3d points;
+    RowVector4d bc;
+    bc << 0.25, 0.25, 0.25, 0.25;
+    Particle<double> s {0, bc};
+    Vector2d angle;
+    angle << igl::PI/4, -igl::PI/4;
+    meshtrace.tracing(1.0, s, angle, callback);
+
+    viewer.data().set_points(trace_points, RowVector3d(0, 0, 0.82745098));
+    viewer.data().add_edges(trace_points.block(0, 0, trace_points.rows() - 1, 3),
+                            trace_points.block(1, 0, trace_points.rows() - 1, 3),
+                            Eigen::RowVector3d(1.0, 0, 0));
+    viewer.data().add_edges(debug_point_a, debug_point_b, Eigen::RowVector3d(0, 1, 0));
+
+    MatrixXi T_tmp(T.rows() * 4, 3);
+    for (int i = 0; i < T.rows(); i++) {
+        auto row = T.row(i);
+        T_tmp.row(i*4+0) << row[0], row[2], row[1];
+        T_tmp.row(i*4+1) << row[0], row[1], row[3];
+        T_tmp.row(i*4+2) << row[3], row[2], row[0];
+        T_tmp.row(i*4+3) << row[1], row[2], row[3];
+    }
+    
+    viewer.data().set_mesh(V, T_tmp);
     viewer.data().set_face_based(true);
-
-    viewer.data().add_edges(B - global_scale*FF1, B + global_scale*FF1 ,Eigen::RowVector3d(0.3, 1, 0.3));
-    viewer.data().add_edges(B - global_scale*FF2, B + global_scale*FF2, Eigen::RowVector3d(0.3, 0.3, 1));
 
     viewer.launch();
 }

@@ -2,3 +2,5 @@
 build
 dataset
 cmake
+.DS_Store
+
