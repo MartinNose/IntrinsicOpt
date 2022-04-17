@@ -6,6 +6,7 @@ using namespace Eigen;
 using namespace std;
 
 void readVTK(const std::string path, MatrixXd &V, MatrixXi &T) {
+    cout << "Reading input from " << path << endl;
     std::ifstream input_s(path);
 
     int V_num;

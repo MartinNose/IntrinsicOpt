@@ -24,12 +24,13 @@
 #include "barycentric_to_cartesian.h"
 #include <unistd.h>
 #include "omp.h"
+#include "LBFGS_Opt.h"
 
 // Input frame field constraints
 
 using namespace std;
 
-#define datapath "../dataset/"
+#define datapath "/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/"
 
 Eigen::MatrixXd V;
 Eigen::MatrixXi T;
@@ -86,38 +87,27 @@ int main(int, char**) {
 
     readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
 
-    Eigen::MatrixXd temp;
-    // igl::readOBJ(datapath "bumpy-cube.obj", V, T);
-    // igl:readMSH(datapath "t13_data.msh", V, T);
-
-    // Eigen::MatrixXd V(4, 3);
-    // Eigen::MatrixXi T(1, 4)
-
-    double l = igl::avg_edge_length(V, T);
-    // vector<ParticleD> A;
-    // //point_sample(V, T, A, 0.2*l);
-
-    // MatrixXi ti(A.size(), 1);
-    // MatrixX4d B(A.size(), 4);
-
-    // #pragma omp parallel for
-    // for (int i = 0; i < A.size(); i++) {
-    //     ti.row(i) << A[i].cell_id;
-    //     B.row(i) = A[i].bc;
-    // }
-
-    // barycentric_to_cartesian(V, T, ti, B, points);
-
     MatrixXd FF0 = MatrixXd::Zero(T.rows(), 3);
     MatrixXd FF1 = MatrixXd::Zero(T.rows(), 3);
     MatrixXd FF2 = MatrixXd::Zero(T.rows(), 3);
 
-    MatrixXd ones = MatrixXd::Constant(T.rows(), 1, 1.0);
+    FF0.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    FF1.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    FF2.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
 
+    Eigen::MatrixXd temp;
+    // igl::readOBJ(datapath "bumpy-cube.obj", V, T);
+    // igl:readMSH(datapath "t13_data.msh", V, T);
 
-    FF0.col(0) = ones;
-    FF1.col(1) = ones;
-    FF2.col(2) = ones;
+    double l = igl::avg_edge_length(V, T);
+    vector<ParticleD> A;
+    point_sample(V, T, A, 0.2*l);
+
+    Eigen::MatrixX3d points;
+    barycentric_to_cartesian(V, T, A, points);
+
+    LBFGS_optimization(l, V, T, FF0, FF1, FF2, A);
+
 
     MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
 
