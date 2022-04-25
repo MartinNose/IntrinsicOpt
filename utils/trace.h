@@ -17,7 +17,7 @@
 using namespace Eigen;
 using namespace std;
 
-enum FLAG { POINT, STEP, EDGE };
+enum FLAG { POINT, STEP, EDGE, FACE, FREE };
 
 extern FLAG FLAG;
 //
@@ -27,21 +27,23 @@ template <typename Scalar = double>
 struct Particle {
     size_t cell_id;
     Eigen::Matrix<Scalar, 1, Eigen::Dynamic> bc;
+    FLAG flag;
     // omit the rest common functions like constructor, assignment operator,
     // etc. Please complete.
-    Particle(size_t _cell_id, RowVector4<Scalar> &_bc) : cell_id(_cell_id) {
+    Particle(size_t _cell_id, RowVector4<Scalar> &_bc, FLAG _flag = FREE) : cell_id(_cell_id), flag(_flag) {
         bc.resize(1, _bc.cols());
         bc.row(0) << _bc;
     }
-    Particle(size_t _cell_id, RowVector3<Scalar> &_bc) : cell_id(_cell_id) {
+    Particle(size_t _cell_id, RowVector3<Scalar> &_bc, FLAG _flag = FACE) : cell_id(_cell_id), flag(_flag) {
         bc.resize(1, _bc.cols());
         bc.row(0) << _bc;
+        flag = FREE;
     }
     template <typename DerivedB> static
-    Particle<Scalar> create(size_t cell_id, Eigen::MatrixBase <DerivedB> bc) {
+    Particle<Scalar> create(size_t cell_id, Eigen::MatrixBase <DerivedB> bc, FLAG flag = FREE) {
         VectorXd tmp;
         tmp << bc;
-        return Particle(cell_id, tmp);
+        return Particle(cell_id, tmp, flag);
     }
 };
 
@@ -408,5 +410,41 @@ public:
     inline bool tracing(Scalar distance, Particle<double> &start, double direction, F &callback) {
         return traceStep<F>(distance, start, direction, 0, Vector3<Scalar>(FF0.row(start.cell_id)),callback);
 
+    }
+    
+    inline bool tracing(Particle<double> & start, Vector3d direction) {
+        auto foo = [](const Particle<>& target, double stepLen, double total)) {
+            cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
+        }
+        // direction to theta and phi
+        Matrix<Scalar, 2, 1> direct;
+        Vector3d ff0, ff1, ff2, n;
+        ff0 = FF0.row(start.cell_id);
+        ff1 = FF1.row(start.cell_id);
+        ff2 = FF2.row(start.cell_id);
+        n = ff0.cross(ff1).normalized();
+        Vector3d direction_cmp0 = direction - (direction.dot(n) * n);
+        direct(0, 0) = acos(direction_cmp0.normalized().dot(ff0.normalized()));
+        if (ff0.cross(direction_cmp0).dot(ff2) < 0) {
+            direct(0, 0) = 2 * igl::PI - direct(0, 0);
+        }
+        direct(1, 0) = acos(direction_cmp0.normalized().dot(direction.normalized()));
+        if (direction.dot(ff2) < 0) {
+            direct(1, 0) = -direct(1, 0);
+        }
+        tracing(direction.norm(), start, direct, 0, foo);
+    }
+
+    inline void project(const Particle& p, Vector3d &v) {
+        switch(p.flag) {
+            case FREE:
+                return;
+            case FACE:
+                // TODO find face and project to face
+            case EDGE:
+                // TODO project v to edge
+            case POINT:
+                // v = 0
+        }
     }
 };

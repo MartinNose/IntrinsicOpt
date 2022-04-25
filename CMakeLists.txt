@@ -20,6 +20,16 @@ list(PREPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 find_package(Eigen3 REQUIRED)
 
+# LBFGSpp
+
+add_library(lbfgspp INTERFACE)
+
+target_include_directories(lbfgspp INTERFACE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/utils/LBFGSpp>
+  $<INSTALL_INTERFACE:$<INSTALL_PREFIX>/utils/LBFGSpp>
+)
+target_link_libraries(lbfgspp INTERFACE Eigen3::Eigen)
+
 # Libigl
 option(LIBIGL_WITH_OPENGL            "Use OpenGL"         ON)
 option(LIBIGL_WITH_OPENGL_GLFW       "Use GLFW"           ON)
@@ -36,7 +46,7 @@ set_property(TARGET "IntrinsicOpt" PROPERTY CXX_STANDARD 17)
 
 target_link_libraries(${target_name}
         PUBLIC
-        Eigen3::Eigen igl::core igl::opengl_glfw igl::comiso OpenMP::OpenMP_CXX
+        Eigen3::Eigen igl::core igl::opengl_glfw igl::comiso OpenMP::OpenMP_CXX lbfgspp
 )
 
 

@@ -5,10 +5,14 @@
 #include "igl/AABB.h"
 #include "kdtree.hpp"
 #include "barycentric_to_cartesian.h"
+#include "LBFGSpp/LBFGS.h"
+#include "trace.h"
 
 using namespace Eigen;
 using namespace std;
 using namespace NNSearch;
+using namespace LBFGSpp;
+
 
 
 void LBFGS_optimization(double l, 
@@ -18,15 +22,33 @@ void LBFGS_optimization(double l,
         const MatrixX3d FF1, 
         const MatrixX3d FF2, 
         vector<Particle<>> &P) {
-    MatrixXd P_in_Cartesian(P.size(), 3);
-    barycentric_to_cartesian(V, T, P, P_in_Cartesian);
+    LBFGSParam<double> param;
+    param.epsilon = 1e-5;
+    param.max_iterations = 100;
+    // param.max_linesearch = 100;
+    LBFGSSolver<double> solver(param);
 
-    // Declare and Build AABB Tree    
+    vector<Vector3d> BCC = {
+        Vector3d(l, 0, 0), Vector3d(-l, 0, 0), Vector3d(0, l, 0), 
+        Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
+    };
+    
+    MatrixXd P_in_Cartesian(P.size(), 3);
+
+    MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
+
+    // Iteration Factors
     double sigma = 0.3 * l;
     int iteration_cnt = 0;
+    int max_iteration = 100;
 
-    while(iteration_cnt++ < 100) {
+    while(iteration_cnt++ < 10) {
+        cout << "----------------------------------\n" << iteration_cnt << "/ 100 iteration" << endl;
+        barycentric_to_cartesian(V, T, P, P_in_Cartesian);
         auto func = [&] (const VectorXd &x, VectorXd &grad) {
+            static int call_cnt = 0;
+            cout << ++call_cnt << " th called" << endl;;
+            //cout << "x = \n" << x.transpose() << endl;
             int N = x.size() / 3;
             MatrixXd points_mat(N ,3);
             for (int i = 0; i < N; i++) {
@@ -38,33 +60,44 @@ void LBFGS_optimization(double l,
 
             double EN = 0;
 
-            auto g_exp = [=](Vector3d pi) {
-                double norm = pi.norm();
+            auto g_exp = [=](Vector3d v) {
+                double norm = v.norm();
                 return exp(-(norm * norm) / (2 * sigma * sigma));
             };
 
             for (int i = 0; i < N; i++) {
-                Vector3d p = points_mat.row(i);
+                Vector3d pi = points_mat.row(i);
                 // Update kd tree
                 vector<int> pts_idx;
                 vector<double> pts_dist;
-                kdtree.radiusSearch(p, l, pts_idx, pts_dist);
+                kdtree.radiusSearch(pi, l, pts_idx, pts_dist);
                 
                 double EI = 0;
                 Vector3d FI = Vector3d::Zero();
                 for (int j = 0; j < pts_idx.size(); j++) {
                     if (pts_idx[j] == i) continue;
                     Vector3d pj = points_mat.row(pts_idx[j]);
-                    
-                    EI += compute_energy(p, pj);
-                    FI += compute_grad(p, pj);
+
+                    EI += g_exp(pi - pj);
+                    FI += (pi - pj) / (sigma * sigma) * g_exp(pi - pj);
+                    for (Vector3d h : BCC) {
+                        EI += - 1.0 / 6.0 * g_exp(pi - pj - (pi + h));
+                        FI += - 1.0 / 6.0 * (pi - pj - (pi + h)) / (sigma * sigma) * g_exp(pi - pj - (pi + h)); 
+                    }
                 }
                 EN += EI;
-                Vector3d gradient = FI; // TODO update FI depending on P[i].bc.cols()
-                grad[i*3 + 0] = FI[0];
-                grad[i*3 + 1] = FI[1];
-                grad[i*3 + 2] = FI[2];
+                Vector3d gradient = FI;
+                Particle<> particle = P[i];
+
+                meshtrace.project(particle, gradient);
+
+               
+
+                grad[i*3 + 0] = -gradient[0];
+                grad[i*3 + 1] = -gradient[1];
+                grad[i*3 + 2] = -gradient[2];
             }
+            cout << "E = " << EN << endl;
             return EN;
         };
 
@@ -75,7 +108,17 @@ void LBFGS_optimization(double l,
             x[i * 3 + 2] = P_in_Cartesian(i, 2);
         }
         double fx;
-        // LBFGS(fun, x, fx);
-        // Update P using trace
+        int niter = solver.minimize(func, x, fx);
+        cout << "=================LBGS HISTORY=================" << endl;
+        cout << "x = \n" << x.transpose() << endl;
+        cout << "f(x) = " << fx << endl;
+
+        for (int i = 0; i < P.size(); i++) {
+            Vector3d displacement;
+            displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);      
+            displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);      
+            displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);      
+            meshtrace.tracing(P[i], displacement);
+        }
     }
 }
