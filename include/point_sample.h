@@ -1,14 +1,12 @@
 #pragma once
 #include "iostream"
-#include "trace.h"
+#include "MeshTrace/trace.h"
 #include "Eigen/Core"
 #include "omp.h"
 #include <vector>
 
 using namespace std;
 using namespace Eigen;
-
-
 
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc);
 
@@ -36,11 +34,11 @@ void point_sample(MatrixXd &V, MatrixXi &T, Particles & P, double l) {
     int n = ceil(total_volume / pow(l, 3));
     cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;
 
-    
     for (int i = 0; i < T.rows(); i++) {
         // get num point
         int num = ceil((volume[i] / total_volume) * n);
 
+        // TODO add distribution via volume
         vector<RowVector4d> bcs(num);
         #pragma omp parallel for
         for (int j = 0; j < num; j++) {
@@ -60,17 +58,16 @@ void point_sample(MatrixXd &V, MatrixXi &T, Particles & P, double l) {
         }
 
         for (int j = 0; j < num; j++) {
-            
             P.emplace_back(i, bcs[j]);
         }
 
         cout << "[" << i + 1 << "/" << T.rows() << "] cells sampled\n";
     }
     cout << "sampling done" << endl;
+    // TODO add sampling on surface;
 }
 
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc) {
-    
     RowVector3d a, b, c;
     a = v1 - v0;
     b = v2 - v0;

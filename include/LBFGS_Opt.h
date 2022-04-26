@@ -6,21 +6,24 @@
 #include "kdtree.hpp"
 #include "barycentric_to_cartesian.h"
 #include "LBFGSpp/LBFGS.h"
-#include "trace.h"
+#include "MeshTrace/trace_manager.h"
 
 using namespace Eigen;
 using namespace std;
 using namespace NNSearch;
 using namespace LBFGSpp;
-
-
+using namespace MESHTRACE;
 
 void LBFGS_optimization(double l, 
         const MatrixXd &V, 
         const MatrixXi &T, 
-        const MatrixX3d FF0, 
-        const MatrixX3d FF1, 
-        const MatrixX3d FF2, 
+        const MatrixX3d &FF0, 
+        const MatrixX3d &FF1, 
+        const MatrixX3d &FF2,
+        const MatrixXd &VF,
+        const MatrixXi &TF,
+        const MatrixX3d &FF0F, 
+        const MatrixX3d &FF1F, 
         vector<Particle<>> &P) {
     LBFGSParam<double> param;
     param.epsilon = 1e-5;
@@ -35,7 +38,8 @@ void LBFGS_optimization(double l,
     
     MatrixXd P_in_Cartesian(P.size(), 3);
 
-    MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
+    // MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
+    MeshTraceManager<double> meshtrace(V, T, FF0, FF1, FF2, VF, TF, FF0F, FF1F);
 
     // Iteration Factors
     double sigma = 0.3 * l;
@@ -48,7 +52,6 @@ void LBFGS_optimization(double l,
         auto func = [&] (const VectorXd &x, VectorXd &grad) {
             static int call_cnt = 0;
             cout << ++call_cnt << " th called" << endl;;
-            //cout << "x = \n" << x.transpose() << endl;
             int N = x.size() / 3;
             MatrixXd points_mat(N ,3);
             for (int i = 0; i < N; i++) {
@@ -91,8 +94,6 @@ void LBFGS_optimization(double l,
 
                 meshtrace.project(particle, gradient);
 
-               
-
                 grad[i*3 + 0] = -gradient[0];
                 grad[i*3 + 1] = -gradient[1];
                 grad[i*3 + 2] = -gradient[2];
@@ -109,7 +110,6 @@ void LBFGS_optimization(double l,
         }
         double fx;
         int niter = solver.minimize(func, x, fx);
-        cout << "=================LBGS HISTORY=================" << endl;
         cout << "x = \n" << x.transpose() << endl;
         cout << "f(x) = " << fx << endl;
 

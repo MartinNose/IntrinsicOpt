@@ -9,17 +9,21 @@
 #include <igl/per_face_normals.h>
 #include <igl/barycentric_coordinates.h>
 #include <vector>
+#include <tuple>
 
-#define EPSILON 0.0000000000001
+#define EPSILON 1e-13
+#define BARYCENTRIC_BOUND 1e-15
 //  `DIM` = 3: tri mesh
 //  `DIM` = 4: tet mesh
 
 using namespace Eigen;
 using namespace std;
 
+
+namespace MESHTRACE {
+
 enum FLAG { POINT, STEP, EDGE, FACE, FREE };
 
-extern FLAG FLAG;
 //
 // Usage: MeshTrace<double, 3>::tracing(...);
 
@@ -179,8 +183,8 @@ public:
         Matrix<double, Dynamic, 3> temp(1,3);
 
         if (b0 >= 0 && b1 >= 0 && b0 + b1 <= 1) { // the target point is inside the triangle
-            Particle<double> res {start.cell_id, endPointB};
-            callback(res, distance, total + distance, STEP, temp);
+            start.bc << endPointB.transpose();
+            callback(start, distance, total + distance);
             return true;
         } else {
             int edges[3][3]{ {0, 1, 2}, {1, 2, 0}, {2, 0, 1} };
@@ -226,21 +230,22 @@ public:
                         }
                     }
 
-                    Particle<double> cut(newCellId, bc);
+                    start.cell_id = newCellId;
+                    start.bc.row(0) << bc.row(0);
                     Scalar traveledDistance = u * (endPoint - startPoint).norm();
 
                     std::cout << "*************************" << std::endl;
                     std::cout << "startPoint: " << startPoint.transpose() << std::endl;
                     std::cout << "endPoint: " << (startPoint + u * (endPoint - startPoint)).transpose() << std::endl;
 
-                    callback(cut, traveledDistance, total, STEP,temp);
+                    callback(start, traveledDistance, total);
                     if (traveledDistance < EPSILON) {
                         return true;
                     }
                     Vec3 edgeDirect = (v1 - v0).normalized();
 
 
-                    Vec3 newFF[4] = {FF0.row(cut.cell_id) ,FF1.row(cut.cell_id)};
+                    Vec3 newFF[4] = {FF0.row(start.cell_id) ,FF1.row(start.cell_id)};
                     newFF[2] = -newFF[0];
                     newFF[3] = -newFF[1];
 
@@ -248,12 +253,9 @@ public:
                     Vec3 new_ff = newFF[0];
                     Scalar theta_0 = get_theta(ff, edgeDirect, normal);
 
-                    if (cut.cell_id == 38811) {
-                        std::cout << "debug" << std::endl;
-                    }
                     for (auto & j : newFF) {
                         Vec3 cur_ff = j.normalized();
-                        Vec3 new_normal = N.row(cut.cell_id);
+                        Vec3 new_normal = N.row(start.cell_id);
                         Scalar cur_theta = get_theta(cur_ff, edgeDirect, new_normal);
 
                         if (abs(theta_0 - cur_theta) < min) {
@@ -266,8 +268,8 @@ public:
                     Vec3 barycenter = (Cell.col(0) + Cell.col(1) + Cell.col(2)) / 3;
                     new_ff_mark.row(0) = barycenter;
                     new_ff_mark.row(1) = new_ff;
-                    callback(cut, traveledDistance, total, EDGE, new_ff_mark);
-                    return traceStep(distance - traveledDistance, cut, direction, total + traveledDistance, new_ff, callback);
+                    callback(start, traveledDistance, total);
+                    return traceStep(distance - traveledDistance, start, direction, total + traveledDistance, new_ff, callback);
                 }
             }
             std::cerr << "Error Case" << std::endl;
@@ -345,14 +347,12 @@ public:
                 int new_cell;
                 RowVector4<Scalar> bc_joint_tet;
                 if (!findAdjacentCell(start.cell_id, vi[0], vi[1], vi[2], &new_cell)) {
-                        // TODO Stop here and callback()
-                        // TODO Make start a point on the boundary
-                        // start.bc.row(0) << bc_joint_face; 
-                        igl::barycentric_coordinates(joint.transpose(), v0.transpose(), v1.transpose(), v2.transpose(), v3.transpose(), bc_joint_tet);
-                        start.bc.row(0) << bc_joint_tet; 
+                    start.bc.resize(1, 3);
+                    start.bc.row(0) << bc_joint_face;
+                    start.flag = FACE;
 
-                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                        return true;
+                    callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                    return true;
                 }
                 Vector4i new_t = T.row(new_cell);
                 Vec3 v0_new = V.row(new_t[0]);
@@ -371,15 +371,15 @@ public:
     }
 
     MeshTrace(const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_V,
-              const Eigen::Matrix<int, Eigen::Dynamic, DIM> &_T,
+              const Eigen::Matrix<int, Eigen::Dynamic, 3> &_T,
               const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF0,
               const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF1
               ):
         V((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _V),
         T(const_cast<Eigen::Matrix<int, Eigen::Dynamic, 3> &>(_T)),
         FF0((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF0),
-        FF1((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF1)
-        {
+        FF1((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF1),
+        FF2((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF1) {
             igl::per_face_normals(V, T, N);
         }
     
@@ -411,40 +411,37 @@ public:
         return traceStep<F>(distance, start, direction, 0, Vector3<Scalar>(FF0.row(start.cell_id)),callback);
 
     }
-    
-    inline bool tracing(Particle<double> & start, Vector3d direction) {
-        auto foo = [](const Particle<>& target, double stepLen, double total)) {
-            cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
+
+    tuple<Vector3d, Vector3d, Vector3d> get_face(Particle<> p) {
+        int face[3];
+        int idx = 0;
+        int unchosen = -1;
+        for (int i = 0; i < 4; i++) {
+            if (p.bc[i] < BARYCENTRIC_BOUND) {
+                continue;
+                unchosen = i;
+            }
+            face[idx++] = i;
         }
-        // direction to theta and phi
-        Matrix<Scalar, 2, 1> direct;
-        Vector3d ff0, ff1, ff2, n;
-        ff0 = FF0.row(start.cell_id);
-        ff1 = FF1.row(start.cell_id);
-        ff2 = FF2.row(start.cell_id);
-        n = ff0.cross(ff1).normalized();
-        Vector3d direction_cmp0 = direction - (direction.dot(n) * n);
-        direct(0, 0) = acos(direction_cmp0.normalized().dot(ff0.normalized()));
-        if (ff0.cross(direction_cmp0).dot(ff2) < 0) {
-            direct(0, 0) = 2 * igl::PI - direct(0, 0);
+        if (idx == 4 || unchosen == -1) {
+            cerr << "logic error: Face particle doesn't meet constraints." << endl;
+            cout << p.cell_id << endl; 
+            cout << p.bc << endl;
         }
-        direct(1, 0) = acos(direction_cmp0.normalized().dot(direction.normalized()));
-        if (direction.dot(ff2) < 0) {
-            direct(1, 0) = -direct(1, 0);
+        Vector3d v0 = V.row(T.row(p.cell_id)[face[0]]);
+        Vector3d v1 = V.row(T.row(p.cell_id)[face[1]]);
+        Vector3d v2 = V.row(T.row(p.cell_id)[face[2]]);
+        Vector3d v3 = V.row(T.row(p.cell_id)[face[unchosen]]);
+        if ((v1 - v0).cross(v2 - v1).dot(v0 - v3) < 0) {
+            return make_tuple(v0, v2, v1);
+        } else {
+            return make_tuple(v0, v1, v2);
         }
-        tracing(direction.norm(), start, direct, 0, foo);
     }
 
-    inline void project(const Particle& p, Vector3d &v) {
-        switch(p.flag) {
-            case FREE:
-                return;
-            case FACE:
-                // TODO find face and project to face
-            case EDGE:
-                // TODO project v to edge
-            case POINT:
-                // v = 0
-        }
+    // Only can called when DIM == 3
+    int find_face(Vector3d v0, Vector3d v1, Vector3d v2) {
+        // TODO
     }
 };
+}

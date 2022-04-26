@@ -19,7 +19,8 @@
 #include "readVTK.h"
 #include <igl/opengl/glfw/Viewer.h>
 #include <igl/PI.h>
-#include "trace.h"
+#include "MeshTrace/trace.h"
+#include "MeshTrace/trace_manager.h"
 #include "point_sample.h"
 #include "barycentric_to_cartesian.h"
 #include <unistd.h>
@@ -87,17 +88,30 @@ int main(int, char**) {
 
     readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
 
-    MatrixXd FF0 = MatrixXd::Zero(T.rows(), 3);
-    MatrixXd FF1 = MatrixXd::Zero(T.rows(), 3);
-    MatrixXd FF2 = MatrixXd::Zero(T.rows(), 3);
+    MatrixXd FF0T = MatrixXd::Zero(T.rows(), 3);
+    MatrixXd FF1T = MatrixXd::Zero(T.rows(), 3);
+    MatrixXd FF2T = MatrixXd::Zero(T.rows(), 3);
 
-    FF0.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    FF1.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    FF2.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
 
-    Eigen::MatrixXd temp;
-    // igl::readOBJ(datapath "bumpy-cube.obj", V, T);
-    // igl:readMSH(datapath "t13_data.msh", V, T);
+    MatrixXi TF(T.rows() * 4, 3);
+    for (int i = 0; i < T.rows(); i++) {
+        auto row = T.row(i);
+        TF.row(i*4+0) << row[0], row[2], row[1];
+        TF.row(i*4+1) << row[0], row[1], row[3];
+        TF.row(i*4+2) << row[3], row[2], row[0];
+        TF.row(i*4+3) << row[1], row[2], row[3];
+    }
+
+    Eigen::VectorXi b;
+    Eigen::MatrixXd bc1;
+    Eigen::MatrixXd bc2;
+
+    MatrixXd FF0F, FF1F;
+    
+    igl::copyleft::comiso::frame_field(V, TF, b, bc1, bc2, FF0F, FF1F);
 
     double l = igl::avg_edge_length(V, T);
     vector<ParticleD> A;
@@ -106,11 +120,9 @@ int main(int, char**) {
     Eigen::MatrixXd points;
     barycentric_to_cartesian(V, T, A, points);
 
-    MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
-    
-    LBFGS_optimization(l, V, T, FF0, FF1, FF2, A);
+    MeshTrace<double, 4> meshtrace(V, T, FF0T, FF1T, FF2T);
 
-
+    LBFGS_optimization(l, V, T, FF0T, FF1T, FF2T, V, TF, FF0F, FF1F, A);
 
     // // MatrixX3d points;
     // RowVector4d bc;
@@ -126,18 +138,9 @@ int main(int, char**) {
                             Eigen::RowVector3d(1.0, 0, 0));
     viewer.data().add_edges(debug_point_a, debug_point_b, Eigen::RowVector3d(0, 1, 0));
 
-
-
-    MatrixXi T_tmp(T.rows() * 4, 3);
-    for (int i = 0; i < T.rows(); i++) {
-        auto row = T.row(i);
-        T_tmp.row(i*4+0) << row[0], row[2], row[1];
-        T_tmp.row(i*4+1) << row[0], row[1], row[3];
-        T_tmp.row(i*4+2) << row[3], row[2], row[0];
-        T_tmp.row(i*4+3) << row[1], row[2], row[3];
-    }
     
-    viewer.data().set_mesh(V, T_tmp);
+    
+    viewer.data().set_mesh(V, TF);
     viewer.data().set_face_based(true);
 
     viewer.launch();

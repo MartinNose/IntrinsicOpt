@@ -1,8 +1,9 @@
 #pragma once
 #include <Eigen/Core>
-#include <trace.h>
+#include "MeshTrace/trace.h"
 
 using namespace Eigen;
+using namespace MESHTRACE;
 
 // V #tet_p by 3
 // T #tet by 4
