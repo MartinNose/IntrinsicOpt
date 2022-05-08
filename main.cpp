@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include "omp.h"
 #include "LBFGS_Opt.h"
+#include "surface_mesh.h"
 
 // Input frame field constraints
 
@@ -86,7 +87,7 @@ void callback(const ParticleD& target, double stepLen, double total) {
 
 int main(int, char**) {
 
-    readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
+    readVTK(datapath "l1-poly-dat/hex/rod/orig.tet.vtk", V, T);
 
     MatrixXd FF0T = MatrixXd::Zero(T.rows(), 3);
     MatrixXd FF1T = MatrixXd::Zero(T.rows(), 3);
@@ -96,33 +97,47 @@ int main(int, char**) {
     FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
     FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
 
-    MatrixXi TF(T.rows() * 4, 3);
-    for (int i = 0; i < T.rows(); i++) {
-        auto row = T.row(i);
-        TF.row(i*4+0) << row[0], row[2], row[1];
-        TF.row(i*4+1) << row[0], row[1], row[3];
-        TF.row(i*4+2) << row[3], row[2], row[0];
-        TF.row(i*4+3) << row[1], row[2], row[3];
-    }
+    MatrixXi TF;
 
-    Eigen::VectorXi b;
-    Eigen::MatrixXd bc1;
-    Eigen::MatrixXd bc2;
+    auto [out_face_map, sharp_edge_map] = get_surface_mesh(V, T, TF);
 
     MatrixXd FF0F, FF1F;
-    
-    igl::copyleft::comiso::frame_field(V, TF, b, bc1, bc2, FF0F, FF1F);
+
+    MatrixXd B;
+    MatrixXd N;
+
+    igl::barycenter(V, TF, B);
+
+    igl::per_face_normals(V, TF, N);
+
+    FF0F.resize(TF.rows(), 3);
+    FF1F.resize(TF.rows(), 3);
+
+    RowVector3d X {1.0, 0, 0};
+    RowVector3d Z {0, 0, 1.0};
+
+    for (int i = 0; i < TF.rows(); i++) {
+        RowVector3d n = N.row(i);
+        RowVector3d f = n.cross(Z);
+        if (f.norm() == 0) {
+            f = n.cross(X);
+        }
+        f.normalize();
+        FF0F.row(i) = f;
+        FF1F.row(i) = f.cross(n);
+    }
 
     double l = igl::avg_edge_length(V, T);
+    // double l = igl::avg_edge_length(V, T);
     vector<ParticleD> A;
-    point_sample(V, T, A, 20 * l);
+    point_sample(V, T, TF, A, l, out_face_map);
+    MeshTraceManager<double> meshtrace(V, T, TF, FF0T, FF1T, FF2T, FF0F, FF1F);
 
     Eigen::MatrixXd points;
-    barycentric_to_cartesian(V, T, A, points);
+    meshtrace.to_cartesian(A, points);
 
-    MeshTrace<double, 4> meshtrace(V, T, FF0T, FF1T, FF2T);
-
-    LBFGS_optimization(l, V, T, FF0T, FF1T, FF2T, V, TF, FF0F, FF1F, A);
+    
+    LBFGS_optimization(l, A, meshtrace);
 
     // // MatrixX3d points;
     // RowVector4d bc;
@@ -132,13 +147,18 @@ int main(int, char**) {
     // angle << igl::PI/4, -igl::PI/4;
     // meshtrace.tracing(1.0, s, angle, callback);
 
-    viewer.data().set_points(trace_points, RowVector3d(0, 0, 0.82745098));
-    viewer.data().add_edges(trace_points.block(0, 0, trace_points.rows() - 1, 3),
-                            trace_points.block(1, 0, trace_points.rows() - 1, 3),
-                            Eigen::RowVector3d(1.0, 0, 0));
-    viewer.data().add_edges(debug_point_a, debug_point_b, Eigen::RowVector3d(0, 1, 0));
+    // viewer.data().set_points(trace_points, RowVector3d(0, 0, 0.82745098));
+    // viewer.data().add_edges(trace_points.block(0, 0, trace_points.rows() - 1, 3),
+    //                         trace_points.block(1, 0, trace_points.rows() - 1, 3),
+    //                         Eigen::RowVector3d(1.0, 0, 0));
+    // viewer.data().add_edges(debug_point_a, debug_point_b, Eigen::RowVector3d(0, 1, 0));
 
-    
+    // viewer.data().add_edges(B - 0.05 * l * FF0F, B + 0.05 * l * FF0F, Eigen::RowVector3d(0, 1, 0));
+    // viewer.data().add_edges(B - 0.05 * l * FF1F, B + 0.05 * l * FF1F, Eigen::RowVector3d(1, 0, 0));
+    // viewer.data().add_edges(B, B - 0.1 * l * N, Eigen::RowVector3d(1, 0, 0));
+
+    viewer.data().set_points(points.block(V.size(), 0, A.size() - V.size(), 3), RowVector3d(0, 0, 0.82745098));
+
     
     viewer.data().set_mesh(V, TF);
     viewer.data().set_face_based(true);

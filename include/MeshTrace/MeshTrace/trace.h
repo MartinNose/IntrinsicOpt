@@ -19,14 +19,11 @@
 using namespace Eigen;
 using namespace std;
 
-
 namespace MESHTRACE {
 
 enum FLAG { POINT, STEP, EDGE, FACE, FREE };
 
-//
 // Usage: MeshTrace<double, 3>::tracing(...);
-
 template <typename Scalar = double>
 struct Particle {
     size_t cell_id;
@@ -34,22 +31,32 @@ struct Particle {
     FLAG flag;
     // omit the rest common functions like constructor, assignment operator,
     // etc. Please complete.
-    Particle(size_t _cell_id, RowVector4<Scalar> &_bc, FLAG _flag = FREE) : cell_id(_cell_id), flag(_flag) {
+    Particle(size_t _cell_id, const RowVector4<Scalar> &_bc, FLAG _flag = FREE) : cell_id(_cell_id), flag(_flag) {
         bc.resize(1, _bc.cols());
         bc.row(0) << _bc;
     }
-    Particle(size_t _cell_id, RowVector3<Scalar> &_bc, FLAG _flag = FACE) : cell_id(_cell_id), flag(_flag) {
+    Particle(size_t _cell_id, const RowVector3<Scalar> &_bc, FLAG _flag = FACE) : cell_id(_cell_id), flag(_flag) {
         bc.resize(1, _bc.cols());
         bc.row(0) << _bc;
-        flag = FREE;
-    }
-    template <typename DerivedB> static
-    Particle<Scalar> create(size_t cell_id, Eigen::MatrixBase <DerivedB> bc, FLAG flag = FREE) {
-        VectorXd tmp;
-        tmp << bc;
-        return Particle(cell_id, tmp, flag);
+        flag = _flag;
     }
 };
+
+template <typename DerivedB>
+Particle<> create_particled(const size_t cell_id, const Eigen::MatrixBase <DerivedB> bc, const FLAG flag = FREE) {
+    if (bc.cols() == 4) {
+        RowVector4d tmp;
+        tmp << bc;
+        return Particle<>(cell_id, tmp, flag);
+    } else if (bc.cols() == 3) {
+        RowVector3d tmp;
+        tmp << bc;
+        return Particle<>(cell_id, tmp, flag);
+    } else {
+        cerr << "create_particled: Unsupported input" << endl;
+        exit(-1);
+    }
+}
 
 using ParticleD = Particle<double>;
 
@@ -63,7 +70,7 @@ private:
     //         Eigen::Matrix <Scalar, 2, 1> // pitch, yaw
     // >::type;
 
-    using VecDIM = Eigen::Matrix<Scalar, DIM, 1> ;
+    using VecDIM = Eigen::Matrix<Scalar, DIM, 1>;
     using Vec2 = Eigen::Matrix<Scalar, 2, 1>;
     using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
     using Vec4 = Eigen::Matrix<Scalar, 4, 1>;
@@ -121,7 +128,6 @@ private:
     // direction, `callback` is called when the particleScalar, 
     // crosses a cell boundary or the travel is done.
     //
-
 
 //    template <typename F>
 //    inline bool traceStep(Scalar distance, Direction direction, unsigned int cell_id, const unsigned edgeIndex[2],
@@ -244,7 +250,6 @@ public:
                     }
                     Vec3 edgeDirect = (v1 - v0).normalized();
 
-
                     Vec3 newFF[4] = {FF0.row(start.cell_id) ,FF1.row(start.cell_id)};
                     newFF[2] = -newFF[0];
                     newFF[3] = -newFF[1];
@@ -347,8 +352,8 @@ public:
                 int new_cell;
                 RowVector4<Scalar> bc_joint_tet;
                 if (!findAdjacentCell(start.cell_id, vi[0], vi[1], vi[2], &new_cell)) {
-                    start.bc.resize(1, 3);
-                    start.bc.row(0) << bc_joint_face;
+                    igl::barycentric_coordinates(joint.transpose(), v0.transpose(), v1.transpose(), v2.transpose(), v3.transpose(), bc_joint_tet);
+                    start.bc.row(0) << bc_joint_tet; 
                     start.flag = FACE;
 
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
@@ -432,7 +437,7 @@ public:
         Vector3d v1 = V.row(T.row(p.cell_id)[face[1]]);
         Vector3d v2 = V.row(T.row(p.cell_id)[face[2]]);
         Vector3d v3 = V.row(T.row(p.cell_id)[face[unchosen]]);
-        if ((v1 - v0).cross(v2 - v1).dot(v0 - v3) < 0) {
+        if ((v1 - v0).cross(v2 - v0).dot(v0 - v3) < 0) {
             return make_tuple(v0, v2, v1);
         } else {
             return make_tuple(v0, v1, v2);
@@ -442,6 +447,7 @@ public:
     // Only can called when DIM == 3
     int find_face(Vector3d v0, Vector3d v1, Vector3d v2) {
         // TODO
+        return 0;
     }
 };
 }

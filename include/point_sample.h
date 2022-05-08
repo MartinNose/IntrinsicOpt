@@ -4,6 +4,8 @@
 #include "Eigen/Core"
 #include "omp.h"
 #include <vector>
+#include <map>
+#include <random>
 
 using namespace std;
 using namespace Eigen;
@@ -11,9 +13,26 @@ using namespace Eigen;
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc);
 
 template<typename Particles>
-void point_sample(MatrixXd &V, MatrixXi &T, Particles & P, double l) {
+void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l,  map<vector<int>, int> out_face_map) {
     cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
     cout << "T rows: " << T.rows() << " cols: " << T.cols() << endl;
+
+    vector<int> num_in_tet(T.rows());
+    map<int, bool> surface;
+    for (int i = 0; i < TF.rows(); i++) {
+        vector<int> key {TF.row(i)[0], TF.row(i)[1], TF.row(i)[2]};
+        sort(key.begin(), key.end());
+        for (int j = 0; j < 3; j++) {
+            int vi = TF.row(i)[j];
+            if (surface.find(vi) != surface.end()) continue;
+            surface[vi] = true;
+            RowVector3d bc = Vector3d::Zero();
+            bc[j] = 1.0;
+            P.emplace_back(i, bc, MESHTRACE::POINT);
+
+            num_in_tet[out_face_map[key]]++;
+        }
+    }
 
     double total_volume = 0;
     std::vector<double> volume(T.rows());
@@ -31,39 +50,64 @@ void point_sample(MatrixXd &V, MatrixXi &T, Particles & P, double l) {
         total_volume += volume[i];
     }
     // Total number of points
-    int n = ceil(total_volume / pow(l, 3));
+    int total = ceil(total_volume / pow(l, 3) * 8);
+    int n = total - P.size(); // to add
+    cout << "Boundary points: " << P.size() << endl;
     cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;
 
-    for (int i = 0; i < T.rows(); i++) {
-        // get num point
-        int num = ceil((volume[i] / total_volume) * n);
-
-        // TODO add distribution via volume
-        vector<RowVector4d> bcs(num);
-        #pragma omp parallel for
-        for (int j = 0; j < num; j++) {
-            auto &&cur = T.row(i);
-            Vector3d v0 = V.row(T(i,0));
-            Vector3d v1 = V.row(T(i,1));
-            Vector3d v2 = V.row(T(i,2));
-            Vector3d v3 = V.row(T(i,3));
-
-            RowVector4d bc;
-            point_sample_tet(v0, v1, v2, v3, bc);
-
-            if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {
-                std::cout << i << "th cell with bc: " << bc << std::endl;
-            }
-            bcs[j] = bc; 
-        }
-
-        for (int j = 0; j < num; j++) {
-            P.emplace_back(i, bcs[j]);
-        }
-
-        cout << "[" << i + 1 << "/" << T.rows() << "] cells sampled\n";
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    std::uniform_real_distribution<double> distribution(0, 1);
+    std::vector<double> possible(volume.size());
+    for (int i = 0; i < volume.size(); i++) {
+        possible[i] = total * volume[i] / total_volume - num_in_tet[i];
     }
-    cout << "sampling done" << endl;
+    std::discrete_distribution<size_t> dist6(possible.begin(),
+                                            possible.end());
+
+    for (int i = 0; i < n; i++) {
+        // get num point
+        // int num = ceil((volume[i] / total_volume) * n);
+        int tet;
+        RowVector4d bc;
+        bool on_boundary;
+        do {
+            tet = dist6(rng);
+            auto &&cur = T.row(tet);
+            Vector3d v[4];
+            v[0] = V.row(T(tet,0));
+            v[1] = V.row(T(tet,1));
+            v[2] = V.row(T(tet,2));
+            v[3] = V.row(T(tet,3));
+
+            point_sample_tet(v[0], v[1], v[2], v[3], bc);
+
+            on_boundary = false;
+            for (int j = 0; j < 4; j++) {
+                vector<Vector3d> f;
+                vector<int> key;
+                for (int k = 0; k < 4; k++) {
+                    if (j == k) continue;
+                    f.push_back(v[k]);
+                    key.push_back(T(tet, k));
+                }
+                sort(key.begin(), key.end());
+                double area = 0.5 * (f[1] - f[0]).cross(f[2] - f[0]).norm();
+                double d = 3 * bc[j] * volume[tet] / area;
+
+                if (out_face_map.find(key) != out_face_map.end() && d < 0.5 * l) {
+                    on_boundary = true;
+                    break;
+                }
+            }
+        } while(on_boundary);
+        if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {
+            std::cout << tet << "th cell with bc: " << bc << std::endl;
+        }
+        P.emplace_back(tet, bc, MESHTRACE::FREE);
+        if (i % 1000 == 0) cout << "[" << i << "/" << n << "] inner points sampled." << endl; 
+    }
+    cout << "sampling done. " << P.size() << " particles sampled." << endl;
     // TODO add sampling on surface;
 }
 

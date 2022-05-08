@@ -15,19 +15,13 @@ using namespace LBFGSpp;
 using namespace MESHTRACE;
 
 void LBFGS_optimization(double l, 
-        const MatrixXd &V, 
-        const MatrixXi &T, 
-        const MatrixX3d &FF0, 
-        const MatrixX3d &FF1, 
-        const MatrixX3d &FF2,
-        const MatrixXd &VF,
-        const MatrixXi &TF,
-        const MatrixX3d &FF0F, 
-        const MatrixX3d &FF1F, 
-        vector<Particle<>> &P) {
+        vector<Particle<>> &P,
+        MeshTraceManager<double>& meshtrace) {
+
     LBFGSParam<double> param;
     param.epsilon = 1e-5;
     param.max_iterations = 100;
+    param.max_linesearch = 100;
     // param.max_linesearch = 100;
     LBFGSSolver<double> solver(param);
 
@@ -38,9 +32,6 @@ void LBFGS_optimization(double l,
     
     MatrixXd P_in_Cartesian(P.size(), 3);
 
-    // MeshTrace<double, 4> meshtrace(V, T, FF0, FF1, FF2);
-    MeshTraceManager<double> meshtrace(V, T, FF0, FF1, FF2, VF, TF, FF0F, FF1F);
-
     // Iteration Factors
     double sigma = 0.3 * l;
     int iteration_cnt = 0;
@@ -48,7 +39,7 @@ void LBFGS_optimization(double l,
 
     while(iteration_cnt++ < 10) {
         cout << "----------------------------------\n" << iteration_cnt << "/ 100 iteration" << endl;
-        barycentric_to_cartesian(V, T, P, P_in_Cartesian);
+        meshtrace.to_cartesian(P, P_in_Cartesian);
         auto func = [&] (const VectorXd &x, VectorXd &grad) {
             static int call_cnt = 0;
             cout << ++call_cnt << " th called" << endl;;
@@ -68,29 +59,33 @@ void LBFGS_optimization(double l,
                 return exp(-(norm * norm) / (2 * sigma * sigma));
             };
 
+            #pragma omp parallel for reduction(+ : EN)
             for (int i = 0; i < N; i++) {
+                Particle<> particle = P[i];
                 Vector3d pi = points_mat.row(i);
                 // Update kd tree
                 vector<int> pts_idx;
                 vector<double> pts_dist;
-                kdtree.radiusSearch(pi, l, pts_idx, pts_dist);
+                kdtree.radiusSearch(pi, 1.5 * l, pts_idx, pts_dist);
                 
                 double EI = 0;
                 Vector3d FI = Vector3d::Zero();
                 for (int j = 0; j < pts_idx.size(); j++) {
                     if (pts_idx[j] == i) continue;
+
                     Vector3d pj = points_mat.row(pts_idx[j]);
 
                     EI += g_exp(pi - pj);
                     FI += (pi - pj) / (sigma * sigma) * g_exp(pi - pj);
-                    for (Vector3d h : BCC) {
-                        EI += - 1.0 / 6.0 * g_exp(pi - pj - (pi + h));
-                        FI += - 1.0 / 6.0 * (pi - pj - (pi + h)) / (sigma * sigma) * g_exp(pi - pj - (pi + h)); 
-                    }
+                    // for (Vector3d h : BCC) {
+                    //     EI += - 1.0 / 6.0 * g_exp(pi - pj - (pi + h));
+                    //     FI += - 1.0 / 6.0 * (pi - pj - (pi + h)) / (sigma * sigma) * g_exp(pi - pj - (pi + h)); 
+                    // }
                 }
-                EN += EI;
+                if (particle.flag != POINT) {
+                    EN += EI;
+                }
                 Vector3d gradient = FI;
-                Particle<> particle = P[i];
 
                 meshtrace.project(particle, gradient);
 
@@ -98,7 +93,7 @@ void LBFGS_optimization(double l,
                 grad[i*3 + 1] = -gradient[1];
                 grad[i*3 + 2] = -gradient[2];
             }
-            cout << "E = " << EN << endl;
+            cout << "E = " << EN << " gnorm: " << grad.norm() << endl;
             return EN;
         };
 
@@ -109,9 +104,15 @@ void LBFGS_optimization(double l,
             x[i * 3 + 2] = P_in_Cartesian(i, 2);
         }
         double fx;
+        cout << "LBFGS Begin" << endl;
         int niter = solver.minimize(func, x, fx);
-        cout << "x = \n" << x.transpose() << endl;
+        cout << "LBFGS Done" << endl;
+        // cout << "x = \n" << x.transpose() << endl;
         cout << "f(x) = " << fx << endl;
+
+        for (auto [fx, gnorm] : solver.energy_history) {
+            std::cout << fx << ", " << gnorm << std::endl;
+        }
 
         for (int i = 0; i < P.size(); i++) {
             Vector3d displacement;
