@@ -4,15 +4,17 @@
 #include <Eigen/Geometry>
 #include <concepts>
 #include <iostream>
-#include <math.h>
+#include <cmath>
 #include <igl/segment_segment_intersect.h>
 #include <igl/per_face_normals.h>
 #include <igl/barycentric_coordinates.h>
 #include <vector>
 #include <tuple>
+#include <map>
+#include <utility>
 
 #define EPSILON 1e-13
-#define BARYCENTRIC_BOUND 1e-15
+#define BARYCENTRIC_BOUND 1e-14
 //  `DIM` = 3: tri mesh
 //  `DIM` = 4: tet mesh
 
@@ -27,10 +29,15 @@ enum FLAG { POINT, STEP, EDGE, FACE, FREE };
 template <typename Scalar = double>
 struct Particle {
     size_t cell_id;
-    Eigen::Matrix<Scalar, 1, Eigen::Dynamic> bc;
+    Eigen::RowVectorXd bc;
     FLAG flag;
     // omit the rest common functions like constructor, assignment operator,
     // etc. Please complete.
+    Particle() {
+        cell_id = -1;
+        bc.resize(1, 3);
+        flag = FREE;
+    }
     Particle(size_t _cell_id, const RowVector4<Scalar> &_bc, FLAG _flag = FREE) : cell_id(_cell_id), flag(_flag) {
         bc.resize(1, _bc.cols());
         bc.row(0) << _bc;
@@ -43,7 +50,7 @@ struct Particle {
 };
 
 template <typename DerivedB>
-Particle<> create_particled(const size_t cell_id, const Eigen::MatrixBase <DerivedB> bc, const FLAG flag = FREE) {
+Particle<> create_particle(const size_t cell_id, const Eigen::MatrixBase <DerivedB> bc, const FLAG flag = FREE) {
     if (bc.cols() == 4) {
         RowVector4d tmp;
         tmp << bc;
@@ -75,13 +82,13 @@ private:
     using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
     using Vec4 = Eigen::Matrix<Scalar, 4, 1>;
 
-    Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &V;
-    Eigen::Matrix<int, Eigen::Dynamic, DIM> &T;
-    Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &FF0;
-    Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &FF1;
-    Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &FF2;
-    Eigen::Matrix<Scalar, Eigen::Dynamic, 3> N;
-
+    const Eigen::MatrixX<Scalar> &V;
+    const Eigen::MatrixXi &T;
+    const Eigen::MatrixX<Scalar> &FF0;
+    const Eigen::MatrixX<Scalar> &FF1;
+    const Eigen::MatrixX<Scalar> &FF2;
+    const Eigen::MatrixX<Scalar> N;
+    std::map<vector<int>, std::pair<int, int>> adjacent_map;
 
     bool findAdjacentCell(int cell_id, const int *edge, int *new_cell) {
         for (int i = 0; i < T.rows(); i++) {
@@ -100,16 +107,35 @@ private:
     bool findAdjacentCell(int cell_id, int f0, int f1, int f2, int *new_cell){
         vector<int> f {f0, f1, f2};
         sort(f.begin(), f.end());
-        for (int i = 0; i < T.rows(); i++) {
-            Vector4i tv = T.row(i);
-            vector<int> t (tv.data(), tv.data() + 4);
-            sort(t.begin(), t.end());
-            if (includes(t.begin(), t.end(), f.begin(), f.end()) && i != cell_id) {
-                *new_cell = i;
-                return true;
-            }
+        if (adjacent_map.find(f) == adjacent_map.end()) {
+            cerr << "Adjacent cell not found" << endl;
+            cerr << "Cell id: " << cell_id << " Face index: " << f0 << f1 << f2 << endl;
+            exit(-1);
+            return false;
         }
-        return false;
+        auto pair = adjacent_map[f];
+        if (pair.second == -1) return false;
+        if (pair.first == cell_id) {
+            *new_cell = pair.second;
+            return true;
+        } else if (pair.second == cell_id) {
+            *new_cell = pair.first;
+            return true;
+        }
+        cerr << "Error in adjacent_map" << endl;
+        cerr << "Cell id: " << cell_id << " Face index: " << f0 << f1 << f2 << endl;
+        cerr << "Pair: " << pair.first << pair.second << endl;
+        exit(-1);
+        // for (int i = 0; i < T.rows(); i++) {
+        //     Vector4i tv = T.row(i);
+        //     vector<int> t (tv.data(), tv.data() + 4);
+        //     sort(t.begin(), t.end());
+        //     if (includes(t.begin(), t.end(), f.begin(), f.end()) && i != cell_id) {
+        //         *new_cell = i;
+        //         return true;
+        //     }
+        // }
+        // return false;
     }
 
     // Get the theta of a and b with sign
@@ -348,12 +374,17 @@ public:
                 Vec3 joint = startPoint + (ds / (ds + de)) * (endPoint - startPoint);
                 RowVector3<Scalar> bc_joint_face;
                 igl::barycentric_coordinates(joint.transpose(), vs[0].transpose(), vs[1].transpose(), vs[2].transpose(), bc_joint_face);
-                if (bc_joint_face.minCoeff() < 0) continue;
+                
+                if (!(abs(bc_joint_face[0] + bc_joint_face[1] + bc_joint_face[2] - 1) <= BARYCENTRIC_BOUND && 
+                    bc_joint_face[0] >= -BARYCENTRIC_BOUND && bc_joint_face[0] <= 1 + BARYCENTRIC_BOUND &&
+                    bc_joint_face[1] >= -BARYCENTRIC_BOUND && bc_joint_face[1] <= 1 + BARYCENTRIC_BOUND &&
+                    bc_joint_face[2] >= -BARYCENTRIC_BOUND && bc_joint_face[2] <= 1 + BARYCENTRIC_BOUND)) continue;
+
                 int new_cell;
                 RowVector4<Scalar> bc_joint_tet;
-                if (!findAdjacentCell(start.cell_id, vi[0], vi[1], vi[2], &new_cell)) {
+                if (!findAdjacentCell(start.cell_id, vi[0], vi[1], vi[2], &new_cell)) { 
                     igl::barycentric_coordinates(joint.transpose(), v0.transpose(), v1.transpose(), v2.transpose(), v3.transpose(), bc_joint_tet);
-                    start.bc.row(0) << bc_joint_tet; 
+                    start.bc << bc_joint_tet;
                     start.flag = FACE;
 
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
@@ -375,30 +406,42 @@ public:
         }
     }
 
-    MeshTrace(const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_V,
-              const Eigen::Matrix<int, Eigen::Dynamic, 3> &_T,
-              const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF0,
-              const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF1
+    MeshTrace(const Eigen::MatrixX<Scalar> &_V,
+              const Eigen::MatrixXi &_T,
+              const Eigen::MatrixX<Scalar> &_FF0,
+              const Eigen::MatrixX<Scalar> &_FF1
               ):
-        V((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _V),
-        T(const_cast<Eigen::Matrix<int, Eigen::Dynamic, 3> &>(_T)),
-        FF0((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF0),
-        FF1((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF1),
-        FF2((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF1) {
-            igl::per_face_normals(V, T, N);
-        }
+        V(_V),
+        T(const_cast<Eigen::MatrixXi &>(_T)),
+        FF0(_FF0),
+        FF1(_FF1),
+        FF2(_FF1) {}
     
-        MeshTrace(const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_V,
-              const Eigen::Matrix<int, Eigen::Dynamic, DIM> &_T,
-              const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF0,
-              const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF1,
-              const Eigen::Matrix<Scalar, Eigen::Dynamic, 3> &_FF2
+        MeshTrace(const Eigen::MatrixX<Scalar> &_V,
+              const Eigen::MatrixXi &_T,
+              const Eigen::MatrixX<Scalar> &_FF0,
+              const Eigen::MatrixX<Scalar> &_FF1,
+              const Eigen::MatrixX<Scalar> &_FF2
               ):
-        V((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _V),
-        T(const_cast<Eigen::Matrix<int, Eigen::Dynamic, 4> &>(_T)),
-        FF0((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF0),
-        FF1((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF1),
-        FF2((Eigen::Matrix<double, Eigen::Dynamic, 3> &) _FF2) {}
+        V(_V),
+        T(_T),
+        FF0(_FF0),
+        FF1(_FF1),
+        FF2(_FF2) {
+            for (int i = 0; i < T.rows(); i++) {
+                Vector4i tet = T.row(i);
+                for (int j = 0; j < 4; j++) {
+                    vector<int> key {tet[0], tet[1], tet[2], tet[3]};
+                    key.erase(key.begin() + j);
+                    sort(key.begin(), key.end());
+                    if (adjacent_map.find(key) != adjacent_map.end()) {
+                        adjacent_map[key].second = i;
+                    } else {
+                        adjacent_map[key] = make_pair(i, -1);
+                    }
+                }
+            }
+        }
 
     // return `true` if the travel is done,
     // `false` otherwise (e.g. hit on the mesh boundary).
@@ -415,39 +458,6 @@ public:
     inline bool tracing(Scalar distance, Particle<double> &start, double direction, F &callback) {
         return traceStep<F>(distance, start, direction, 0, Vector3<Scalar>(FF0.row(start.cell_id)),callback);
 
-    }
-
-    tuple<Vector3d, Vector3d, Vector3d> get_face(Particle<> p) {
-        int face[3];
-        int idx = 0;
-        int unchosen = -1;
-        for (int i = 0; i < 4; i++) {
-            if (p.bc[i] < BARYCENTRIC_BOUND) {
-                continue;
-                unchosen = i;
-            }
-            face[idx++] = i;
-        }
-        if (idx == 4 || unchosen == -1) {
-            cerr << "logic error: Face particle doesn't meet constraints." << endl;
-            cout << p.cell_id << endl; 
-            cout << p.bc << endl;
-        }
-        Vector3d v0 = V.row(T.row(p.cell_id)[face[0]]);
-        Vector3d v1 = V.row(T.row(p.cell_id)[face[1]]);
-        Vector3d v2 = V.row(T.row(p.cell_id)[face[2]]);
-        Vector3d v3 = V.row(T.row(p.cell_id)[face[unchosen]]);
-        if ((v1 - v0).cross(v2 - v0).dot(v0 - v3) < 0) {
-            return make_tuple(v0, v2, v1);
-        } else {
-            return make_tuple(v0, v1, v2);
-        }
-    }
-
-    // Only can called when DIM == 3
-    int find_face(Vector3d v0, Vector3d v1, Vector3d v2) {
-        // TODO
-        return 0;
     }
 };
 }

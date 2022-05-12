@@ -25,12 +25,12 @@ inline std::tuple<T, T, T> sort3(T a, T b, T c) {
     }
 }
 
-std::tuple<map<vector<int>, int>, map<vector<int>, int>> get_surface_mesh(const MatrixXd &V, const MatrixXi &TT, MatrixXi &TF) {
+std::tuple<map<vector<int>, pair<int, int>>, map<vector<int>, int>> get_surface_mesh(const MatrixXd &V, const MatrixXi &TT, MatrixXi &TF) {
     assert(TT.cols() == 4);
     TF.resize(TT.rows(), 3);
 
-    // map a sorted face index to the tet it belongs to.
-    map<vector<int>, int> out_face_map;
+    // map a sorted face index to the (tri, tet) it belongs to.
+    map<vector<int>, pair<int, int>> out_face_map;
     // map a sorted edge index to the face it belongs to. 
     map<vector<int>, int> sharp_edge_map;
 
@@ -42,16 +42,16 @@ std::tuple<map<vector<int>, int>, map<vector<int>, int>> get_surface_mesh(const 
             key.erase(key.begin() + j);
             sort(key.begin(), key.end());
             if (out_face_map.find(key) != out_face_map.end()) {
-                out_face_map[key] = -1;
+                out_face_map[key] = make_pair(-1, -1);
             } else {
-                out_face_map[key] = i * 10 + unselected;
+                out_face_map[key] = make_pair(i, j);
             }
         }
     }
 
     auto iter = out_face_map.begin();
     while(iter != out_face_map.end()) {
-        if (iter->second == -1) {
+        if (iter->second.first == -1) {
             iter = out_face_map.erase(iter);
         } else {
             iter++;
@@ -64,14 +64,14 @@ std::tuple<map<vector<int>, int>, map<vector<int>, int>> get_surface_mesh(const 
         Vector3d v0 = V.row(key[0]);
         Vector3d v1 = V.row(key[1]);
         Vector3d v2 = V.row(key[2]);
-        Vector3d v3 = V.row(TT.row(val/10)[val % 10]);
-
+        Vector3d v3 = V.row(TT.row(val.first)[val.second]);
         if ((v1 - v0).cross(v2 - v0).dot(v0 - v3) > 0) {
-            TF.row(cnt++) << key[0], key[1], key[2];
+            TF.row(cnt) << key[0], key[1], key[2];
         } else {
-            TF.row(cnt++) << key[0], key[2], key[1];
+            TF.row(cnt) << key[0], key[2], key[1];
         }
-        out_face_map[key] = val/10;
+        out_face_map[key] = make_pair(cnt, val.first);
+        cnt++;
     }
     // Define sharp edges
     return make_tuple(out_face_map, sharp_edge_map);

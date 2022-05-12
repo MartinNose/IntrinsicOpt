@@ -5,7 +5,7 @@
 using namespace Eigen;
 using namespace std;
 
-void readVTK(const std::string path, MatrixXd &V, MatrixXi &T) {
+void readVTK(const std::string& path, MatrixXd &V, MatrixXi &T) {
     cout << "Reading input from " << path << endl;
     std::ifstream input_s(path);
 
@@ -63,7 +63,6 @@ void readVTK(const std::string path, MatrixXd &V, MatrixXi &T) {
         }
         
         T.row(i) << stoi(tmp0), stoi(tmp1), stoi(tmp2), stoi(tmp3);
-        
     }
 
 } 

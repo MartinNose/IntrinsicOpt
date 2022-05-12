@@ -17,9 +17,11 @@ namespace LBFGSpp {
 /// L-BFGS solver for unconstrained numerical optimization
 ///
 template <typename Scalar,
-          template <class> class LineSearch = LineSearchBacktracking>
+          template <class> class LineSearch = LineSearchNocedalWright>
 class LBFGSSolver
 {
+public:
+std::vector<std::pair<Scalar, Scalar>> energy_history;
 private:
     typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> Vector;
     typedef Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Matrix;
@@ -48,7 +50,6 @@ private:
     }
 
 public:
-    std::vector<std::pair<Scalar, Scalar>> energy_history;
     ///
     /// Constructor for the L-BFGS solver.
     ///

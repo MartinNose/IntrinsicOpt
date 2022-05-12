@@ -1,3 +1,5 @@
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "openmp-use-default-none"
 #pragma once
 #include "iostream"
 #include "MeshTrace/trace.h"
@@ -6,6 +8,7 @@
 #include <vector>
 #include <map>
 #include <random>
+#include <algorithm>
 
 using namespace std;
 using namespace Eigen;
@@ -13,24 +16,30 @@ using namespace Eigen;
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc);
 
 template<typename Particles>
-void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l,  map<vector<int>, int> out_face_map) {
+void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l,  map<vector<int>, pair<int, int>> out_face_map) {
     cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
     cout << "T rows: " << T.rows() << " cols: " << T.cols() << endl;
 
-    vector<int> num_in_tet(T.rows());
+    vector<int> num_in_tet(T.rows(), 0);
     map<int, bool> surface;
-    for (int i = 0; i < TF.rows(); i++) {
-        vector<int> key {TF.row(i)[0], TF.row(i)[1], TF.row(i)[2]};
-        sort(key.begin(), key.end());
+    for (auto const &[key, val]: out_face_map) {
         for (int j = 0; j < 3; j++) {
-            int vi = TF.row(i)[j];
+            int vi = key[j];
             if (surface.find(vi) != surface.end()) continue;
             surface[vi] = true;
             RowVector3d bc = Vector3d::Zero();
-            bc[j] = 1.0;
-            P.emplace_back(i, bc, MESHTRACE::POINT);
+            RowVector3i tri = TF.row(val.first);
+            for (int k = 0; k < 3; k++) {
+                if (tri[k] == vi) {
+                    bc[k] = 1.0;
+                    break;
+                }
+            }
+            assert(bc.maxCoeff() >= 0.9);
+            MESHTRACE::Particle<double> temp(val.first, bc, MESHTRACE::POINT);
+            P.push_back(temp);
 
-            num_in_tet[out_face_map[key]]++;
+            num_in_tet[val.second]++;
         }
     }
 
@@ -50,8 +59,9 @@ void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Part
         total_volume += volume[i];
     }
     // Total number of points
-    int total = ceil(total_volume / pow(l, 3) * 8);
-    int n = total - P.size(); // to add
+    cout << "lattice: " << l << endl;
+    int total = ceil(total_volume / pow(l, 3));
+    int n = max(total - (int)P.size(), 1); // to add
     cout << "Boundary points: " << P.size() << endl;
     cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;
 
@@ -108,7 +118,6 @@ void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Part
         if (i % 1000 == 0) cout << "[" << i << "/" << n << "] inner points sampled." << endl; 
     }
     cout << "sampling done. " << P.size() << " particles sampled." << endl;
-    // TODO add sampling on surface;
 }
 
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc) {
@@ -144,3 +153,4 @@ void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVec
 
     igl::barycentric_coordinates(p, v0.transpose(), v1.transpose(), v2.transpose(), v3.transpose(), bc);
 }
+#pragma clang diagnostic pop
