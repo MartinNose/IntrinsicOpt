@@ -36,9 +36,9 @@ void create_trivial_case(MatrixXd &V, MatrixXi &T, int m = 10, double l = 0.1) {
                     T.row((i * m * m + j * m + k) * 5 + 4) << c6, c7, c4, c2;
                 } else {
                     T.row((i * m * m + j * m + k) * 5 + 0) << c0, c6, c4, c5;
-                    T.row((i * m * m + j * m + k) * 5 + 1) << c0, c1, c3, c5;
-                    T.row((i * m * m + j * m + k) * 5 + 2) << c0, c3, c2, c6;
-                    T.row((i * m * m + j * m + k) * 5 + 3) << c0, c6, c5, c3;
+                    T.row((i * m * m + j * m + k) * 5 + 1) << c0, c6, c5, c3;
+                    T.row((i * m * m + j * m + k) * 5 + 2) << c0, c1, c3, c5;
+                    T.row((i * m * m + j * m + k) * 5 + 3) << c0, c3, c2, c6;
                     T.row((i * m * m + j * m + k) * 5 + 4) << c3, c5, c7, c6;
                 }
                 mark = !mark;

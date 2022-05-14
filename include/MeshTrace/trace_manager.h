@@ -6,6 +6,7 @@
 #include "Eigen/Core"
 #include <math.h>
 #include <map>
+#include <vector>
 #include <ctime>
 
 #include "kdtree.hpp"
@@ -21,29 +22,40 @@ public:
     MatrixXd tri_normal;
 
     void convert_to_face(Particle<> &p) {
+        assert(p.flag == FACE);
         using namespace igl;
-        p.flag = FREE;
+        using namespace std;
         vector<int> face(3);
-        int idx = 0;
+        vector<pair<double, int>> pairv(4);
+
+        RowVector3d p_cartesian = RowVector3d::Zero();
         for (int i = 0; i < 4; i++) {
-            if (p.bc[i] < BARYCENTRIC_BOUND) continue;
-            face[idx++] = TT.row(p.cell_id)[i];
-        }
-        if (idx != 3) {
-            cerr << "logic error: Face particle doesn't meet constraints." << endl;
-            cout << p.cell_id << endl; 
-            cout << p.bc << endl;
+            pairv[i] = make_pair(p.bc[i], TT.row(p.cell_id)[i]);
+            RowVector3d v = V.row(TT.row(p.cell_id)[i]);
+            p_cartesian += p.bc[i] * v;
         }
 
-        vector<Particle<>> a {p};
-        MatrixXd mat_temp;
-        to_cartesian(a, mat_temp);
+        sort(pairv.begin(), pairv.end());
 
-        RowVector3d p_cartesian = mat_temp.row(0);
+        for (int i = 0; i < 3; i++) {
+            face[i] = pairv[i].second;
+        }
 
-        sort(face.begin(), face.end());
-        assert(p.cell_id == out_face_map[face].second);
-        p.cell_id = out_face_map[face].first;
+
+
+        auto key = face;
+        sort(key.begin(), key.end());
+        if (out_face_map.find(key) == out_face_map.end()) {
+            face[2] = pairv[4].second;
+        }
+        key = face;
+        sort(key.begin(), key.end());
+        if (out_face_map.find(key) == out_face_map.end()) {
+            cerr << "Invalid cell" << endl;
+            exit(-1);
+        }
+        assert(p.cell_id == out_face_map[key].second);
+        p.cell_id = out_face_map[key].first;
 
         Vector3i tri = TF.row(p.cell_id);
         RowVector3d bc;
@@ -87,7 +99,7 @@ public:
 
     bool tracing(Particle<> &p, const Vector3d &v) {
         auto foo = [](const Particle<>& target, double stepLen, double total) {
-            // cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
+             cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
         };
         if (p.flag == FREE) {
                 // direction to theta and phi
