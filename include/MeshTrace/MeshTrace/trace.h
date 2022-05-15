@@ -14,7 +14,7 @@
 #include <utility>
 
 #define EPSILON 1e-13
-#define BARYCENTRIC_BOUND 1e-14
+#define BARYCENTRIC_BOUND 1e-10
 //  `DIM` = 3: tri mesh
 //  `DIM` = 4: tet mesh
 
@@ -167,6 +167,80 @@ private:
 //    inline bool traceStep(Scalar distance, Direction direction, unsigned int cell_id, const unsigned edgeIndex[2],
 //                          const Scalar CutCoord1D, Scalar total, F &callback);
 
+    bool find_joint(const Vector3d &start, const Vector3d &end, const Vector3d &f0, const Vector3d &f1, const Vector3d &f2, Vector3d &joint) {
+        Vector3d face_n = (f0 - f1).cross(f0-f2).normalized();
+        if (face_n.dot(start - f0) * face_n.dot(end - f0) < BARYCENTRIC_BOUND || // Ch eck if start and end are at different side of face
+            face_n.dot(start - f1) * face_n.dot(end - f1) < BARYCENTRIC_BOUND ||
+            face_n.dot(start - f2) * face_n.dot(end - f2) < BARYCENTRIC_BOUND) {
+            double ds = abs(face_n.dot(start - f0));
+            double de = abs(face_n.dot(end - f0));
+            Vector3d joint_t;
+            if (ds > de) joint_t = start + (ds / (ds + de)) * (end - start);
+            else joint_t = end + (de / (ds + de)) * (start - end);
+            RowVector3d bc;
+            igl::barycentric_coordinates(joint_t.transpose(), f0.transpose(), f1.transpose(), f2.transpose(), bc);
+            if (bc.minCoeff() >= -BARYCENTRIC_BOUND) {
+                joint = joint_t;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int compute_new_p(int cell, int f0, int f1, int f2, const Vector3d & joint, RowVector4d & bc) {
+        vector<int> face_i {f0, f1, f2};
+        sort(face_i.begin(), face_i.end());
+        vector<int> candidates = findAdjacentCell(cell, face_i);
+        RowVector4<Scalar> bc_joint_tet;
+        if (candidates.empty()) {
+            return -1;
+        }
+        int new_cell = candidates[0];
+
+        Vector4i new_t = T.row(new_cell);
+        Vec3 v0_new = V.row(new_t[0]);
+        Vec3 v1_new = V.row(new_t[1]);
+        Vec3 v2_new = V.row(new_t[2]);
+        Vec3 v3_new = V.row(new_t[3]);
+        RowVector4d temp_bc;
+        igl::barycentric_coordinates(joint.transpose(),
+                                     v0_new.transpose(), v1_new.transpose(),
+                                     v2_new.transpose(), v3_new.transpose(),
+                                     temp_bc);
+        assert(temp_bc.minCoeff() > -BARYCENTRIC_BOUND);
+        bc = temp_bc;
+        return new_cell;
+    }
+
+    int compute_new_p(int cell, int f0, int f1, const Vector3d &end_point) {
+        vector<int> edge_i {f0, f1};
+        sort(edge_i.begin(), edge_i.end());
+        vector<int> candidates = findAdjacentCell(cell, edge_i);
+        int new_cell = -1;
+
+        Vector3d edge[2] = {V.row(f0), V.row(f1)};
+        for (int i = 0; i < candidates.size(); i++) {
+            if (candidates[i] == cell) continue;
+            Vector4i candi_tet = T.row(candidates[i]);
+            Vec3 extra[2];
+            int extra_cnt = 0;
+            for (int j = 0; j < 4; j++) {
+                if (candi_tet[j] == f0 || candi_tet[j] == f1) continue;
+                extra[extra_cnt++] = V.row(candi_tet[j]);
+            }
+            assert(extra_cnt == 2);
+            Vector3d n0 = (edge[1] - edge[0]).cross(extra[0] - edge[1]);
+            Vector3d n1 = (edge[1] - edge[0]).cross(extra[1] - edge[1]);
+            Vector3d n2 = (edge[1] - edge[0]).cross(end_point - edge[1]);
+
+            if (n2.cross(n0).dot(n1.cross(n2)) > 0) {
+                return candidates[i];
+            }
+        }
+        return -1;
+    }
+
+
 public:
     template <typename F>
     inline bool traceStep(Scalar distance, Particle<Scalar> &start, double direction, Scalar total, Vector3<Scalar> ff, F &callback) {
@@ -316,6 +390,10 @@ public:
 
     template <typename F>
     inline bool traceStep(Scalar distance, Particle<Scalar> &start, Matrix <Scalar, 2, 1> direction, Scalar total, F &callback) {
+        if (start.bc.minCoeff() < -BARYCENTRIC_BOUND) {
+            cerr << "Invalid bc" << start.bc << endl;
+            assert(start.bc.minCoeff() >= -BARYCENTRIC_BOUND);
+        };
         Matrix3<Scalar> ff;
         ff.col(0) << FF0.row(start.cell_id)[0], FF0.row(start.cell_id)[1], FF0.row(start.cell_id)[2];
         ff.col(1) << FF1.row(start.cell_id)[0], FF1.row(start.cell_id)[1], FF1.row(start.cell_id)[2];
@@ -349,10 +427,10 @@ public:
         cout << "d_trans: " << displacement.transpose() << endl;
 
         Vec3 startPoint = BC[0] * v[0] +  BC[1] * v[1] +  BC[2] * v[2] +  BC[3] * v[3];
-        Vec3 endPoint = startPoint + displacement;
+        Vec3 end_point = startPoint + displacement;
 
         RowVector4<Scalar> endPointB;
-        igl::barycentric_coordinates(endPoint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), endPointB);
+        igl::barycentric_coordinates(end_point.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), endPointB);
 
         // Get the coefficient of the local coordinate of the target point
         double b0(endPointB(0));
@@ -382,161 +460,267 @@ public:
             vector<int> face_i ={cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]], cell_i[pos_eb_idx[2]]};
 
             Vec3 face_n = (vs[0] - vs[1]).cross(vs[0]-vs[2]).normalized();
-            
-            assert(face_n.dot(startPoint - vs[0]) * face_n.dot(endPoint - vs[0]) < -BARYCENTRIC_BOUND ||
-                   face_n.dot(startPoint - vs[1]) * face_n.dot(endPoint - vs[1]) < -BARYCENTRIC_BOUND ||
-                   face_n.dot(startPoint - vs[2]) * face_n.dot(endPoint - vs[2]) < -BARYCENTRIC_BOUND);
-            
-            double ds = abs(face_n.dot(startPoint - vs[0]));
-            double de = abs(face_n.dot(endPoint - vs[0]));
-            Vec3 joint = startPoint + (ds / (ds + de)) * (endPoint - startPoint);
-            RowVector3<Scalar> bc_joint_face;
-            igl::barycentric_coordinates(joint.transpose(), vs[0].transpose(), vs[1].transpose(), vs[2].transpose(), bc_joint_face);
+            Vector3d joint;
+            bool found = find_joint(startPoint, end_point, vs[0], vs[1], vs[2], joint);
 
-            assert(abs(bc_joint_face[0] + bc_joint_face[1] + bc_joint_face[2] - 1) <= BARYCENTRIC_BOUND);
-            assert(bc_joint_face[0] >= -BARYCENTRIC_BOUND);
-            assert(bc_joint_face[1] >= -BARYCENTRIC_BOUND);
-            assert(bc_joint_face[2] >= -BARYCENTRIC_BOUND);
+            assert(found && "joint has to be on the face");
 
-            candidates = findAdjacentCell(start.cell_id, face_i);
             RowVector4<Scalar> bc_joint_tet;
-            if (candidates.empty()) {
+
+            new_cell = compute_new_p(start.cell_id,
+                                     cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]], cell_i[pos_eb_idx[2]],
+                                     joint, bc_joint_tet);
+            if (new_cell == -1) {
                 igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), bc_joint_tet);
-                start.bc << bc_joint_tet;
+                start.bc[0] = joint[0];
+                start.bc[1] = joint[1];
+                start.bc[2] = joint[2];
+                start.bc[3] = (double) cell_i[neg_eb_idx[0]];
                 start.flag = FACE;
 
                 callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                 return true;
             }
-            new_cell = candidates[0];
-
-            Vector4i new_t = T.row(new_cell);
-            Vec3 v0_new = V.row(new_t[0]);
-            Vec3 v1_new = V.row(new_t[1]);
-            Vec3 v2_new = V.row(new_t[2]);
-            Vec3 v3_new = V.row(new_t[3]);
-            igl::barycentric_coordinates(joint.transpose(), v0_new.transpose(), v1_new.transpose(), v2_new.transpose(), v3_new.transpose(), bc_joint_tet);
+            assert(bc_joint_tet.minCoeff() > -BARYCENTRIC_BOUND && "joint on face");
             start.cell_id = new_cell;
             start.bc.row(0) << bc_joint_tet;
             callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
             return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
-        } else if (neg_eb_idx.size() == 2) { // joint is on the edge
+        } else if (neg_eb_idx.size() == 2) { // endpoint is on the other side of the edge
             vector<int> face_i ={cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]]};
-            vector<int> candidate_cell = findAdjacentCell(start.cell_id, face_i);
-            new_cell = -1;
             Vec3 edge[2] = {v[pos_eb_idx[0]], v[pos_eb_idx[1]]};
-            int edge_idx[2] = {cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]]};
-            for (int i = 0; i < candidate_cell.size(); i++) {
-                if (candidates[i] == start.cell_id) continue;
-                Vector4i candi_tet = T.row(candidates[i]);
-                Vec3 extra[2];
-                int extra_cnt = 0;
-                for (int j = 0; j < 4; j++) {
-                    if (candi_tet[j] == edge_idx[0] || candi_tet[j] == edge_idx[1]) continue;
-                    extra[extra_cnt++] = V.row(candi_tet[i]);
+            // if joint on the edge
+
+
+
+            Vector3d face_joint_1, face_joint_2;
+            bool found_1, found_2;
+            found_1 = find_joint(startPoint, end_point,
+                                 v[pos_eb_idx[0]], v[pos_eb_idx[1]], v[neg_eb_idx[0]],
+                                 face_joint_1);
+            found_2 = find_joint(startPoint, end_point,
+                                 v[pos_eb_idx[0]], v[pos_eb_idx[1]], v[neg_eb_idx[1]],
+                                 face_joint_2);
+
+            RowVector4<Scalar> bc_joint_tet;
+            if (found_1 && found_2) {
+                double u, t;
+                if (igl::segment_segment_intersect(startPoint, end_point - startPoint, edge[0], edge[1] - edge[0], u, t, BARYCENTRIC_BOUND * BARYCENTRIC_BOUND)) { // joint is on the edge
+                    Vector3d joint = edge[0] + t * (edge[1] - edge[0]);
+
+                    new_cell = compute_new_p(start.cell_id,
+                                             cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]],
+                                             end_point);
+
+                    RowVector4d new_bc;
+                    if (new_cell == -1) {
+                        igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
+                        start.bc << new_bc;
+                        start.flag = EDGE;
+                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        // TODO check if edge on the surface
+                        return true;
+                    } else {
+                        Vector4i new_t = T.row(new_cell);
+                        Vec3 v0_new = V.row(new_t[0]); Vec3 v1_new = V.row(new_t[1]);
+                        Vec3 v2_new = V.row(new_t[2]); Vec3 v3_new = V.row(new_t[3]);
+                        igl::barycentric_coordinates(joint.transpose(), v0_new.transpose(), v1_new.transpose(), v2_new.transpose(), v3_new.transpose(), new_bc);
+                        assert(new_bc.minCoeff() > -BARYCENTRIC_BOUND);
+                        start.cell_id = new_cell;
+                        start.bc.row(0) << new_bc;
+                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+                   }
                 }
-                assert(extra_cnt == 3);
-                Vector3d n0 = (edge[1] - edge[0]).cross(extra[0] - edge[1]);
-                Vector3d n1 = (edge[1] - edge[0]).cross(extra[1] - edge[1]);
-                Vector3d n2 = (edge[1] - edge[0]).cross(endPoint - edge[1]);
+            }
 
-                if (n2.cross(n0).dot(n1.cross(n2)) > 0) {
-                    new_cell = candidates[i];
-                    break;
+
+            if (found_1 != found_2) { // joint on face
+                new_cell = compute_new_p(start.cell_id,
+                                         cell_i[pos_eb_idx[0]],
+                                         cell_i[pos_eb_idx[1]],
+                                         found_1 ? cell_i[neg_eb_idx[0]] : cell_i[neg_eb_idx[1]],
+                                         found_1 ? face_joint_1 : face_joint_2,
+                                         bc_joint_tet);
+                Vector3d joint = (found_1) ? face_joint_1 : face_joint_2;
+                if (new_cell == -1) {
+                    igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), bc_joint_tet);
+                    start.bc[0] = joint[0];
+                    start.bc[1] = joint[1];
+                    start.bc[2] = joint[2];
+                    start.bc[3] = (double) cell_i[neg_eb_idx[found_1 ? 1 : 0]];
+
+                    start.flag = FACE;
+
+                    callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                    return true;
+                }
+                if (bc_joint_tet.minCoeff() > -BARYCENTRIC_BOUND) {
+                    start.cell_id = new_cell;
+                    start.bc.row(0) << bc_joint_tet;
+                    callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                    return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                 }
             }
-            // compute joint on edge
-            Vector3d n = (edge[1] - edge[0]).cross(endPoint - startPoint).normalized();
-            Vector3d nn = n.cross(edge[1] - edge[0]).normalized();
-            double de = (endPoint - edge[0]).dot(nn);
-            double ds = (startPoint - edge[0]).dot(nn);
-
-            Vector3d joint;
-            if (de > ds) {
-                joint = endPoint + (de / (de + ds)) * (startPoint - endPoint);
-            } else {
-                joint = startPoint + (ds / (de + ds)) * (endPoint - startPoint);
-            }
-
-            RowVector4d new_bc;
-            if (new_cell == -1) {
-                igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
-
-                start.bc << new_bc;
-
-                start.flag = EDGE;
-                callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                return true;
-                // make joint
-            } else {
-                Vector4i new_t = T.row(new_cell);
-                Vec3 v0_new = V.row(new_t[0]);
-                Vec3 v1_new = V.row(new_t[1]);
-                Vec3 v2_new = V.row(new_t[2]);
-                Vec3 v3_new = V.row(new_t[3]);
-                igl::barycentric_coordinates(joint.transpose(), v0_new.transpose(), v1_new.transpose(), v2_new.transpose(), v3_new.transpose(), new_bc);
-                start.cell_id = new_cell;
-                start.bc.row(0) << new_bc;
-                callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
-            }
+            assert(!found_1 && !found_2);
+            assert(false && "edge condition wrong");
         } else if (neg_eb_idx.size() == 3) { // joint is on the vertex
             vector<int> face_i ={cell_i[pos_eb_idx[0]]};
-            candidates = findAdjacentCell(start.cell_id, face_i);
-            new_cell = -1;
+            Vector3d vertex = V.row(face_i[0]);
 
-            int joint_idx = cell_i[pos_eb_idx[0]];
-            Vec3 joint = v[pos_eb_idx[0]];
+            Vector3d ev = vertex - end_point;
+            Vector3d vs = startPoint - vertex;
+            Vector3d es = startPoint - end_point;
 
-            RowVector4d temp_bc;
-            for (int i = 0; i < candidates.size(); i++) {
-                if (candidates[i] == start.cell_id) continue;
+            double dist;
 
-                Vec3 new_v[4];
-                Vector4i candi_tet = T.row(candidates[i]);
-                int new_cell_v_idx = -1;
-                for (int j = 0; j < 4; j++) {
-                    if (candi_tet[j] == joint_idx) {
-                        new_cell_v_idx = j;
+            if (ev.norm() > vs.norm()) {
+                dist = ev.cross(es).squaredNorm() / es.squaredNorm();
+            } else {
+                dist = vs.cross(es).squaredNorm() / es.squaredNorm();
+            }
+            if (dist <= BARYCENTRIC_BOUND * BARYCENTRIC_BOUND) { // joint is on the vertex
+                candidates = findAdjacentCell(start.cell_id, face_i);
+                new_cell = -1;
+
+                int joint_idx = cell_i[pos_eb_idx[0]];
+                Vec3 joint = v[pos_eb_idx[0]];
+
+                RowVector4d temp_bc;
+                for (int i = 0; i < candidates.size(); i++) {
+                    if (candidates[i] == start.cell_id) continue;
+
+                    Vec3 new_v[4];
+                    Vector4i candi_tet = T.row(candidates[i]);
+                    int new_cell_v_idx = -1;
+                    for (int j = 0; j < 4; j++) {
+                        if (candi_tet[j] == joint_idx) {
+                            new_cell_v_idx = j;
+                        }
+                        new_v[j] = V.row(candi_tet[j]);
                     }
-                    new_v[j] = V.row(candi_tet[j]);
-                }
-                assert(new_cell_v_idx != -1);
+                    assert(new_cell_v_idx != -1);
 
-                igl::barycentric_coordinates(endPoint.transpose(), new_v[0].transpose(), new_v[1].transpose(), new_v[2].transpose(), new_v[3].transpose(), temp_bc);
+                    igl::barycentric_coordinates(end_point.transpose(), new_v[0].transpose(), new_v[1].transpose(), new_v[2].transpose(), new_v[3].transpose(), temp_bc);
 
-                bool ifnan = false;
-                int neg_count = 0;
-                for (int j = 0; j < 4; j++) {
-                    if (isnan(temp_bc[j])) {
-                        ifnan = true;
-                        break;
+                    bool ifnan = false;
+                    int neg_count = 0;
+                    for (int j = 0; j < 4; j++) {
+                        if (isnan(temp_bc[j])) {
+                            ifnan = true;
+                            break;
+                        }
+                        if (temp_bc[j] < 0) neg_count++;
                     }
-                    if (temp_bc[j] < 0) neg_count++;
-                }
-                if (ifnan) continue;
+                    if (ifnan) continue;
 
-                if (neg_count == 0 || (neg_count == 1 && temp_bc[new_cell_v_idx] < 0)) {
-                    igl::barycentric_coordinates(joint.transpose(), new_v[0].transpose(), new_v[1].transpose(), new_v[2].transpose(), new_v[3].transpose(), temp_bc);
-                    start.cell_id = candidates[i];
-                    start.bc << temp_bc;
+                    if (neg_count == 0 || (neg_count == 1 && temp_bc[new_cell_v_idx] < 0)) {
+                        igl::barycentric_coordinates(joint.transpose(), new_v[0].transpose(), new_v[1].transpose(), new_v[2].transpose(), new_v[3].transpose(), temp_bc);
+                        assert(temp_bc.minCoeff() > -BARYCENTRIC_BOUND);
+                        start.cell_id = candidates[i];
+                        start.bc << temp_bc;
+                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+                    }
+                }
+
+                // joint is the endpoint
+                RowVector4d new_bc = RowVector4d::Zero();
+                new_bc[pos_eb_idx[0]] = 1.;
+
+                start.bc << new_bc;
+                start.flag = POINT;
+                callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                return true;
+            }
+
+            // joint is on the edge adjacent to v
+//            for (int i = 0; i < 3; i++) {
+//                Vector3d edge_end = V.row(cell_i[neg_eb_idx[i]]);
+//                double u, t;
+//                if (igl::segment_segment_intersect(startPoint,
+//                                                   end_point - startPoint, vertex, edge_end - vertex,
+//                                                   u, t, BARYCENTRIC_BOUND * BARYCENTRIC_BOUND)) {
+//
+//                    Vector3d joint;
+//                    joint = vertex + t * (edge_end - vertex);
+//
+//                    new_cell = compute_new_p(start.cell_id,
+//                                             cell_i[pos_eb_idx[0]], cell_i[neg_eb_idx[i]],
+//                                             end_point);
+//
+//                    RowVector4d new_bc;
+//                    if (new_cell == -1) {
+//                        igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
+//
+//                        start.bc << new_bc;
+//
+//                        start.flag = EDGE;
+//                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+//                        return true;
+//                    } else {
+//                        Vector4i new_t = T.row(new_cell);
+//                        Vec3 v0_new = V.row(new_t[0]);
+//                        Vec3 v1_new = V.row(new_t[1]);
+//                        Vec3 v2_new = V.row(new_t[2]);
+//                        Vec3 v3_new = V.row(new_t[3]);
+//                        igl::barycentric_coordinates(joint.transpose(), v0_new.transpose(), v1_new.transpose(), v2_new.transpose(), v3_new.transpose(), new_bc);
+//                        if (new_bc.minCoeff() < -BARYCENTRIC_BOUND) continue;
+//                        start.cell_id = new_cell;
+//                        start.bc.row(0) << new_bc;
+//                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+//                        return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+//                    }
+//                }
+//            }
+
+            // joint is on the face adjacent to v
+
+            for (int i = 0; i < 2; i++) {
+                for (int j = i + 1; j < 3; j++) {
+                    Vector3d joint;
+                    Vector3d face0 = V.row(cell_i[neg_eb_idx[i]]);
+                    Vector3d face1 = V.row(cell_i[neg_eb_idx[j]]);
+
+                    bool found = find_joint(startPoint, end_point, vertex, face0, face1, joint);
+                    if (!found) continue;
+
+                    RowVector4<Scalar> bc_joint_tet;
+
+                    new_cell = compute_new_p(start.cell_id,
+                                             cell_i[pos_eb_idx[0]], cell_i[neg_eb_idx[i]], cell_i[neg_eb_idx[j]],
+                                             joint,
+                                             bc_joint_tet);
+                    if (new_cell == -1) {
+                        igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), bc_joint_tet);
+                        start.bc[0] = joint[0];
+                        start.bc[1] = joint[1];
+                        start.bc[2] = joint[2];
+                        int face_index;
+                        for (int k = 0; k < 3; ++k) {
+                            if (k == i || k == j) continue;
+                            face_index = k;
+                        }
+                        start.bc[3] = (double) cell_i[neg_eb_idx[face_index]];
+                        start.flag = FACE;
+
+                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        return true;
+                    }
+
+                    start.cell_id = new_cell;
+                    start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                     return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                 }
             }
 
-            // joint is the endpoint
-            RowVector4d new_bc = RowVector4d::Zero();
-            new_bc[pos_eb_idx[0]] = 1.;
 
-            start.bc << new_bc;
-            start.flag = POINT;
-            callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-            return true;
-        } else {
-            cout << "wrong case" << endl;
-            exit(-1);
+
         }
+        cout << "trace failed " << "start_point: " << startPoint.transpose() << "bc: " << start.bc <<
+             " end_point: " << end_point.transpose() << " bc: " << endPointB << endl;
+        exit(-1);
     }
 
     MeshTrace(const Eigen::MatrixX<Scalar> &_V,

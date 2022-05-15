@@ -3,6 +3,7 @@
 #pragma once
 #include "iostream"
 #include "MeshTrace/trace.h"
+#include "MeshTrace/trace_manager.h"
 #include "Eigen/Core"
 #include "omp.h"
 #include <vector>
@@ -16,7 +17,7 @@ using namespace Eigen;
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc);
 
 template<typename Particles>
-void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l,  map<vector<int>, pair<int, int>> out_face_map) {
+void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l, const map<vector<int>, pair<int, int>> &out_face_map, MESHTRACE::MeshTraceManager<double> &meshtrace) {
     cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
     cout << "T rows: " << T.rows() << " cols: " << T.cols() << endl;
 
@@ -60,7 +61,7 @@ void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Part
     }
     // Total number of points
     cout << "lattice: " << l << endl;
-    int total = ceil(total_volume / pow(l, 3));
+    int total = ceil(total_volume / pow(l, 3) * 2);
     int n = max(total - (int)P.size(), 1); // to add
     cout << "Boundary points: " << P.size() << endl;
     cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;
@@ -75,6 +76,10 @@ void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Part
     std::discrete_distribution<size_t> dist6(possible.begin(),
                                             possible.end());
 
+    vector<Vector3d> BCC = {
+            Vector3d(l, 0, 0), Vector3d(-l, 0, 0), Vector3d(0, l, 0),
+            Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
+    };
     for (int i = 0; i < n; i++) {
         // get num point
         // int num = ceil((volume[i] / total_volume) * n);
@@ -93,22 +98,27 @@ void point_sample(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Part
             point_sample_tet(v[0], v[1], v[2], v[3], bc);
 
             on_boundary = false;
-            for (int j = 0; j < 4; j++) {
-                vector<Vector3d> f;
-                vector<int> key;
-                for (int k = 0; k < 4; k++) {
-                    if (j == k) continue;
-                    f.push_back(v[k]);
-                    key.push_back(T(tet, k));
-                }
-                sort(key.begin(), key.end());
-                double area = 0.5 * (f[1] - f[0]).cross(f[2] - f[0]).norm();
-                double d = 3 * bc[j] * volume[tet] / area;
-
-                if (out_face_map.find(key) != out_face_map.end() && d < 0.5 * l) {
-                    on_boundary = true;
-                    break;
-                }
+//            for (int j = 0; j < 4; j++) {
+//                vector<Vector3d> f;
+//                vector<int> key;
+//                for (int k = 0; k < 4; k++) {
+//                    if (j == k) continue;
+//                    f.push_back(v[k]);
+//                    key.push_back(T(tet, k));
+//                }
+//                sort(key.begin(), key.end());
+//                double area = 0.5 * (f[1] - f[0]).cross(f[2] - f[0]).norm();
+//                double d = 3 * bc[j] * volume[tet] / area;
+//
+//                if (out_face_map.find(key) != out_face_map.end() && d < 0.5 * l) {
+//                    on_boundary = true;
+//                    break;
+//                }
+//            }
+            for (auto const &h : BCC) {
+                MESHTRACE::ParticleD p(tet, bc, MESHTRACE::FREE);
+                meshtrace.tracing(p, 0.5001 * h);
+                if (p.flag == MESHTRACE::FACE) on_boundary = true;
             }
         } while(on_boundary);
         if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {

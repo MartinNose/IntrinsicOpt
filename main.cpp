@@ -114,7 +114,7 @@ bool key_down(igl::opengl::glfw::Viewer& viewer, unsigned char key, int modifier
     using namespace std;
     using namespace Eigen;
 
-    if (key >= '1' && key <= '9') {
+    if (key >= '0' && key <= '9') {
         viewer.data().clear();
         viewer.data().set_mesh(V, TF);
         viewer.data().set_points((debug_point[key - '0']), RowVector3d(0, 0, 0.5));
@@ -152,7 +152,10 @@ void log() {
 int main(int argc, char* argv[]) {
 //    readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
     // readVTK(datapath "trivial.vtk", V, T);
-    create_trivial_case(V, T, 5, 0.1);
+    int col_of_cube;
+//    cin >> col_of_cube;
+    col_of_cube = 5;
+    create_trivial_case(V, T, col_of_cube, 0.1);
 
     MatrixXd FF0T = MatrixXd::Zero(T.rows(), 3);
     MatrixXd FF1T = MatrixXd::Zero(T.rows(), 3);
@@ -193,22 +196,32 @@ int main(int argc, char* argv[]) {
 
 
     vector<ParticleD> PV;
-    for (int i = 0; i < T.rows(); i++) {
-        if (i % 5 != 1) continue;
-        if (i/125%5 != 2) continue;
-        ParticleD p;
-        p.cell_id = i;
-        p.bc.resize(1, 4);
-        p.bc << 0.25, 0.25, 0.25, 0.25;
-        p.flag = MESHTRACE::FREE;
-        PV.push_back(p);
-    }
+//    for (int i = 0; i < T.rows(); i++) {
+//        if (i % 5 != 1) continue;
+////        if (i/5 / (col_of_cube * col_of_cube) != 2) continue;
+//        ParticleD p;
+//        p.cell_id = i;
+//        p.bc.resize(1, 4);
+//        p.bc << 0.25, 0.25, 0.25, 0.25;
+//        p.flag = MESHTRACE::FREE;
+//        PV.push_back(p);
+//    }
+
+
 
     // l = igl::avg_edge_length(V, T);
 
 //    l = 0.15000000001;
-    l = 0.08;
+    l = 0.10000000001;
 //    cin >> l;
+
+    point_sample(V, T, TF, PV, l, out_face_map, meshtrace);
+    meshtrace.to_cartesian(PV, debug_point[0]);
+
+    int debug_cnt = 0;
+    meshtrace.particle_insert_and_delete(PV, 0.8 * l, l);
+    meshtrace.to_cartesian(PV, debug_point[(debug_cnt++) % 9 + 1]);
+
 
     MatrixXd points_mat;
     meshtrace.to_cartesian(PV, points_mat);
@@ -236,14 +249,16 @@ int main(int argc, char* argv[]) {
     // Iteration Factors
     double sigma = 0.15 * l;
     int iteration_cnt = 0;
-    int max_iteration = 1;
+    int max_iteration = 5;
+
 
 
     while(iteration_cnt++ < max_iteration) {
         cout << "----------------------------------\n" << iteration_cnt << "th LBFGS iteration" << endl;
+        meshtrace.particle_insert_and_delete(PV, 0.8 * l, l);
         MatrixXd P_in_Cartesian;
         meshtrace.to_cartesian(PV, P_in_Cartesian);
-        debug_point[3] = P_in_Cartesian;
+        debug_point[(debug_cnt++) % 9 + 1] = P_in_Cartesian;
         auto func = [&] (const VectorXd &x, VectorXd &grad) {
 //            static int call_cnt = 0;
 //            cout << ++call_cnt << " th called" << endl;;
@@ -335,6 +350,7 @@ int main(int argc, char* argv[]) {
         test1.resize(PV.size(), 3);
         for (int i = 0; i < PV.size(); i++) {
 //            cout << "dealing with " << i << "/" << PV.size() << " particles" << endl;
+
             Vector3d displacement;
             test1.row(i)[0] = x[i * 3 + 0];
             test1.row(i)[1] = x[i * 3 + 1];
@@ -348,12 +364,12 @@ int main(int argc, char* argv[]) {
             meshtrace.tracing(PV[i], displacement);
         }
         cout << test1;
-        debug_point[2] = test1;
+        debug_point[(debug_cnt++) % 9 + 1] = test1;
         meshtrace.to_cartesian(PV, trace_points);
-        debug_point[1] = trace_points;
+        debug_point[(debug_cnt++) % 9 + 1] = trace_points;
     }
 
-
+    cout << "last run debug_cnt: " << (--debug_cnt) % 9 + 1 << endl;
 
     igl::opengl::glfw::Viewer viewer;
     viewer.data().set_mesh(V, TF);

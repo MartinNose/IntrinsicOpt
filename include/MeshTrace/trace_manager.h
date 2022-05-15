@@ -4,12 +4,13 @@
 #include <igl/per_face_normals.h>
 #include <igl/barycentric_coordinates.h>
 #include "Eigen/Core"
-#include <math.h>
+#include <cmath>
+#include <algorithm>
 #include <map>
 #include <vector>
 #include <ctime>
-
-#include "kdtree.hpp"
+#include <functional>
+#include "KDTreeVectorOfVectorsAdaptor.h"
 
 namespace MESHTRACE {
 using namespace Eigen;
@@ -22,44 +23,37 @@ public:
     MatrixXd tri_normal;
 
     void convert_to_face(Particle<> &p) {
-        assert(p.flag == FACE);
+        assert(p.flag == FACE && p.bc.cols() == 4);
         using namespace igl;
         using namespace std;
         vector<int> face(3);
-        vector<pair<double, int>> pairv(4);
 
-        RowVector3d p_cartesian = RowVector3d::Zero();
+        RowVector3d p_cartesian;
+        p_cartesian[0] = p.bc[0];
+        p_cartesian[1] = p.bc[1];
+        p_cartesian[2] = p.bc[2];
+
+        int not_face = (int)p.bc[3];
+
+        RowVector4i tet = TT.row(p.cell_id);
+        int index = 0;
         for (int i = 0; i < 4; i++) {
-            pairv[i] = make_pair(p.bc[i], TT.row(p.cell_id)[i]);
-            RowVector3d v = V.row(TT.row(p.cell_id)[i]);
-            p_cartesian += p.bc[i] * v;
+            if (tet[i] == not_face) continue;
+            face[index++] = tet[i];
         }
 
-        sort(pairv.begin(), pairv.end());
-
-        for (int i = 0; i < 3; i++) {
-            face[i] = pairv[i].second;
-        }
-
-
-
-        auto key = face;
+        vector<int> key = face;
         sort(key.begin(), key.end());
-        if (out_face_map.find(key) == out_face_map.end()) {
-            face[2] = pairv[4].second;
-        }
-        key = face;
-        sort(key.begin(), key.end());
-        if (out_face_map.find(key) == out_face_map.end()) {
-            cerr << "Invalid cell" << endl;
-            exit(-1);
-        }
+
+        assert(out_face_map.find(key) != out_face_map.end() && "out_face_map must contains all out_face");
         assert(p.cell_id == out_face_map[key].second);
         p.cell_id = out_face_map[key].first;
 
         Vector3i tri = TF.row(p.cell_id);
         RowVector3d bc;
         barycentric_coordinates(p_cartesian, V.row(tri[0]), V.row(tri[1]), V.row(tri[2]), bc);
+
+        assert(bc.minCoeff() > -BARYCENTRIC_BOUND);
 
         p.flag = FACE;
         p.bc.resize(1, 3);
@@ -110,11 +104,17 @@ public:
             ff2 = FF2T.row(p.cell_id);
             n = ff0.cross(ff1).normalized();
             Vector3d direction_cmp0 = v - (v.dot(n) * n);
-            direct(0, 0) = acos(direction_cmp0.normalized().dot(ff0.normalized()));
+            double re = direction_cmp0.normalized().dot(ff0.normalized());
+            re = std::max(re, -1.);
+            re = std::min(re, 1.);
+            direct(0, 0) = acos(re);
             if (ff0.cross(direction_cmp0).dot(ff2) < 0) {
                 direct(0, 0) = 2 * igl::PI - direct(0, 0);
             }
-            direct(1, 0) = acos(direction_cmp0.normalized().dot(v.normalized()));
+            re = direction_cmp0.normalized().dot(v.normalized());
+            re = std::max(re, -1.);
+            re = std::min(re, 1.);
+            direct(1, 0) = acos(re);
             if (v.dot(ff2) < 0) {
                 direct(1, 0) = -direct(1, 0);
             }
@@ -193,12 +193,21 @@ public:
                 RowVector3d bc = A[i].bc;
                 P.row(i) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
             } else if (A[i].flag == EDGE) {
-                P.row(i) = A[i].bc;//TODO 1d support
-            } 
+                //TODO 1d support
+                RowVector4i tet_i = TT.row(A[i].cell_id);
+                RowVector4d bc = A[i].bc;
+                P.row(i) = bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3]);
+            }
             else if (A[i].flag == POINT) {
-                RowVector3i tri_i = TF.row(A[i].cell_id);
-                RowVector3d bc = A[i].bc;
-                P.row(i) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
+                if (A[i].bc.cols() == 4) {
+                    RowVector4i tet_i = TT.row(A[i].cell_id);
+                    RowVector4d bc = A[i].bc;
+                    P.row(i) = bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3]);
+                } else {
+                    RowVector3i tri_i = TF.row(A[i].cell_id);
+                    RowVector3d bc = A[i].bc;
+                    P.row(i) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
+                }
             } 
         }
     }
@@ -230,8 +239,17 @@ public:
         }
     }
 
+
+
     bool particle_insert_and_delete(vector<ParticleD> &P, double n_r, double lattice) {
+        using kdtree_t =
+        KDTreeVectorOfVectorsAdaptor<std::vector<Eigen::Vector3d>, double>;
         std::cout << "Executing particle deletion scheme" << endl;
+
+        const vector<Vector3d> BCC = {
+                Vector3d(lattice, 0, 0), Vector3d(-lattice, 0, 0), Vector3d(0, lattice, 0),
+                Vector3d(0, -lattice, 0), Vector3d(0, 0, lattice), Vector3d(0, 0, -lattice)
+        };
         
         // lattice /= 2;
         double d_particle = 0.5 * lattice;
@@ -240,9 +258,17 @@ public:
         double d_hex = 0.9 * lattice;
 
         MatrixXd points_mat;
+        vector<Vector3d> points_vec(P.size());
 
         to_cartesian(P, points_mat);
-        NNSearch::KDTree kdtree(points_mat, 5);
+        for (int i = 0; i < points_mat.rows(); i++) {
+            Vector3d temp = points_mat.row(i);
+            points_vec[i] = temp;
+        }
+
+        kdtree_t kdtree(3, points_vec, 25);
+        nanoflann::SearchParams params;
+        params.sorted = false;
 
         vector<ParticleD> new_particles;
         vector<bool> removed(P.size(), false);
@@ -252,20 +278,35 @@ public:
                 continue;
             }
 
-            Vector3d p = points_mat.row(i);
-            vector<double> D;
-            vector<int> pts_idx;
-            vector<double> pts_dist;
-            kdtree.radiusSearch(p, n_r, pts_idx, pts_dist);
+            bool delete_condition = false;
+            for (int j = 0; j < 6; j++) {
+                ParticleD temp = P[i];
+                tracing(temp, 0.500001 * BCC[j]);
+                if (temp.flag != FREE) {
+                    delete_condition = true;
+                    break;
+                }
+            }
 
-            for (int j = 0; j < pts_idx.size() && D.size() < 8; j++) {
-                if (!removed[pts_idx[j]] && pts_idx[j] != i) {
-                    D.push_back(pts_dist[j]);
+            if (delete_condition) {
+                removed[i] = true;
+                continue;
+            }
+
+            Vector3d p = points_vec[i];
+            vector<double> D;
+
+            std::vector<std::pair<size_t, double>> ret_matches;
+            kdtree.index->radiusSearch(&p[0], n_r * n_r, ret_matches, params);
+
+            for (int j = 0; j < ret_matches.size() && D.size() < 8; j++) {
+                if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
+                    D.push_back(sqrt(ret_matches[j].second));
                 }
             }
             sort(D.begin(), D.end());
 
-            bool delete_condition = false;
+
 
             if (D.size() > 1 && D[0] < d_particle) delete_condition = true;
             if (D.size() > 2 && (D[0] + D[1]) / 2 < d_edge) delete_condition = true;
@@ -342,14 +383,14 @@ public:
 
                 Vector3d c_p = candidates_mat.row(j);
 
-                vector<int> pts_idx;
-                vector<double> pts_dist;
-                kdtree.radiusSearch(c_p, n_r, pts_idx, pts_dist); 
+                std::vector<std::pair<size_t, double>> ret_matches;
+                kdtree.index->radiusSearch(&c_p[0], n_r * n_r, ret_matches, params);
+
 
                 vector<double> D;
-                for (int k = 0; k < pts_idx.size() && D.size() <= 8; k++) {
-                    if (removed[pts_idx[k]]) continue;
-                    D.push_back(pts_dist[k]);
+                for (int k = 0; k < ret_matches.size() && D.size() <= 8; k++) {
+                    if (removed[ret_matches[k].first]) continue;
+                    D.push_back(ret_matches[k].second);
                 }
 
                 if (D.size() >= 1 && D[0] < 0.8 * lattice) {// TODO locall lattice
