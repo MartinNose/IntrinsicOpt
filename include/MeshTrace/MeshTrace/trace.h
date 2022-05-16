@@ -91,6 +91,7 @@ private:
     std::map<vector<int>, std::pair<int, int>> face_adjacent_map;
     std::map<std::pair<int, int>, vector<int>> edge_adjacent_map;
     std::vector<vector<int>> vertice_adjacent_map;
+    std::vector<bool> surface_point; // if ith point in V is on the surface
 
     bool findAdjacentCell(int cell_id, const int *edge, int *new_cell) {
         for (int i = 0; i < T.rows(); i++) {
@@ -734,17 +735,12 @@ public:
         FF1(_FF1),
         FF2(_FF1) {}
     
-        MeshTrace(const Eigen::MatrixX<Scalar> &_V,
-              const Eigen::MatrixXi &_T,
-              const Eigen::MatrixX<Scalar> &_FF0,
-              const Eigen::MatrixX<Scalar> &_FF1,
-              const Eigen::MatrixX<Scalar> &_FF2
+    MeshTrace(const Eigen::MatrixX<Scalar> &_V, const Eigen::MatrixXi &_T,
+              const Eigen::MatrixX<Scalar> &_FF0, const Eigen::MatrixX<Scalar> &_FF1, const Eigen::MatrixX<Scalar> &_FF2,
+              vector<bool> _surface_point
               ):
-        V(_V),
-        T(_T),
-        FF0(_FF0),
-        FF1(_FF1),
-        FF2(_FF2) {
+        V(_V), T(_T), FF0(_FF0), FF1(_FF1), FF2(_FF2),
+        surface_point(_surface_point){
             vertice_adjacent_map.resize(V.rows());
             for (int i = 0; i < T.rows(); i++) {
                 Vector4i tet = T.row(i);

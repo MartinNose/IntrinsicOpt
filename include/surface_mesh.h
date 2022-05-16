@@ -25,7 +25,10 @@ inline std::tuple<T, T, T> sort3(T a, T b, T c) {
     }
 }
 
-std::tuple<map<vector<int>, pair<int, int>>, map<vector<int>, int>> get_surface_mesh(const MatrixXd &V, const MatrixXi &TT, MatrixXi &TF) {
+using boundary_info_t = std::tuple<map<vector<int>, pair<int, int>>,
+        map<vector<int>, int>,
+        vector<bool>>;
+boundary_info_t get_surface_mesh(const MatrixXd &V, const MatrixXi &TT, MatrixXi &TF) {
     assert(TT.cols() == 4);
     TF.resize(TT.rows(), 3);
 
@@ -60,7 +63,14 @@ std::tuple<map<vector<int>, pair<int, int>>, map<vector<int>, int>> get_surface_
 
     TF.resize(out_face_map.size(), 3);
     int cnt = 0;
+
+    vector<bool> surface_point;
+    surface_point.resize(V.rows());
+    std::fill(surface_point.begin(), surface_point.end(), false);
     for (auto const &[key, val]: out_face_map) {
+        surface_point[key[0]] = true;
+        surface_point[key[1]] = true;
+        surface_point[key[2]] = true;
         Vector3d v0 = V.row(key[0]);
         Vector3d v1 = V.row(key[1]);
         Vector3d v2 = V.row(key[2]);
@@ -70,9 +80,9 @@ std::tuple<map<vector<int>, pair<int, int>>, map<vector<int>, int>> get_surface_
         } else {
             TF.row(cnt) << key[0], key[2], key[1];
         }
-        out_face_map[key] = make_pair(cnt, val.first);
+        out_face_map[key] = make_pair(cnt, val.first); // first is in TF, second in TT
         cnt++;
     }
     // Define sharp edges
-    return make_tuple(out_face_map, sharp_edge_map);
+    return make_tuple(out_face_map, sharp_edge_map, surface_point);
 }

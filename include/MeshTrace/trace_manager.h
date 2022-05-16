@@ -3,6 +3,7 @@
 #include "MeshTrace/trace.h"
 #include <igl/per_face_normals.h>
 #include <igl/barycentric_coordinates.h>
+#include <igl/doublearea.h>
 #include "Eigen/Core"
 #include <cmath>
 #include <algorithm>
@@ -13,15 +14,13 @@
 #include "KDTreeVectorOfVectorsAdaptor.h"
 
 namespace MESHTRACE {
+
+inline int vertex_of_face[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+
 using namespace Eigen;
 template<typename Scalar = double>
 class MeshTraceManager {
-// private:
-public:
-    MeshTrace<Scalar, 4> tet_trace;
-    MeshTrace<Scalar, 3> tri_trace;
-    MatrixXd tri_normal;
-
+private:
     void convert_to_face(Particle<> &p) {
         assert(p.flag == FACE && p.bc.cols() == 4);
         using namespace igl;
@@ -59,7 +58,11 @@ public:
         p.bc.resize(1, 3);
         p.bc << bc;
     }
-
+public:
+    MeshTrace<Scalar, 4> tet_trace;
+    MeshTrace<Scalar, 3> tri_trace;
+    MatrixXd tri_normal;
+    MatrixXd per_vertex_normals;
 
 public:
     const Eigen::MatrixX<Scalar> V;
@@ -73,7 +76,11 @@ public:
 
     std::map<vector<int>, vector<int>> adjacent_map;
 
-    std::map<vector<int>, pair<int, int>> out_face_map;
+    std::map<vector<int>, pair<int, int>> out_face_map; // map[triangle] = [id_in_TF, id_in_TT}
+    std::vector<bool> surface_point;
+    int anchor_cnt;
+
+
     MeshTraceManager(
         const Eigen::MatrixX<Scalar> &_V,
         const Eigen::MatrixXi &_TT,
@@ -83,13 +90,148 @@ public:
         const Eigen::MatrixX<Scalar> &_FF2T,
         const Eigen::MatrixX<Scalar> &_FF0F,
         const Eigen::MatrixX<Scalar> &_FF1F,
-        std::map<vector<int>, pair<int, int>> &_out_face_map
-    ) : tet_trace(_V, _TT, _FF0T, _FF1T, _FF2T), tri_trace(_V, _TF, _FF0F, _FF1F), 
+        std::map<vector<int>, pair<int, int>> &_out_face_map,
+        std::vector<bool> & _surface_point
+    ) : tet_trace(_V, _TT, _FF0T, _FF1T, _FF2T, _surface_point), tri_trace(_V, _TF, _FF0F, _FF1F),
         V(_V), TT(_TT), TF(_TF), FF0T(_FF0T), FF1T(_FF1T), FF2T(_FF2T),
-        FF0F(_FF0F), FF1F(_FF1F), out_face_map(_out_face_map) {
+        FF0F(_FF0F), FF1F(_FF1F), out_face_map(_out_face_map), surface_point(_surface_point) {
         igl::per_face_normals(V, TF, tri_normal);
+        igl::per_vertex_normals(V, TF, per_vertex_normals);
+        anchor_cnt = 0;
+        for(int i = 0; i < surface_point.size(); i++) {
+            if (surface_point[i]) anchor_cnt++;
+        }
     }
 
+    bool particle_insert_and_delete(vector<ParticleD> &P, double n_r, double lattice) {
+        using kdtree_t =
+        KDTreeVectorOfVectorsAdaptor<std::vector<Eigen::Vector3d>, double>;
+        std::cout << "Executing particle deletion scheme" << endl;
+
+        const vector<Vector3d> BCC = {
+                Vector3d(lattice, 0, 0), Vector3d(-lattice, 0, 0), Vector3d(0, lattice, 0),
+                Vector3d(0, -lattice, 0), Vector3d(0, 0, lattice), Vector3d(0, 0, -lattice)
+        };
+
+        // todo local lattice
+
+        double d_particle = 0.5 * lattice;
+        double d_edge = 0.75 * lattice;
+        double d_quad = 0.9 * lattice;
+        double d_hex = 0.9 * lattice;
+
+        MatrixXd points_mat;
+        vector<Vector3d> points_vec(P.size());
+
+        to_cartesian(P, points_mat); // todo directly get vec
+        for (int i = 0; i < points_mat.rows(); i++) {
+            Vector3d temp = points_mat.row(i);
+            points_vec[i] = temp;
+        }
+
+        kdtree_t kdtree(3, points_vec, 25);
+        nanoflann::SearchParams params;
+        params.sorted = true;
+
+        vector<ParticleD> new_particles;
+        vector<bool> removed(P.size());
+        std::fill(removed.begin(), removed.end(), false);
+        for (int i = 0; i < P.size(); i++) {
+            if (P[i].flag == POINT) {
+                new_particles.push_back(P[i]);
+                continue;
+            }
+            Vector3d p = points_vec[i];
+            vector<double> D;
+
+            std::vector<std::pair<size_t, double>> ret_matches;
+            kdtree.index->radiusSearch(&p[0], n_r * n_r, ret_matches, params);
+
+            for (int j = 0; j < ret_matches.size() && D.size() <= 8; j++) {
+                if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
+                    D.push_back(sqrt(ret_matches[j].second));
+                }
+            }
+
+            bool delete_condition = false;
+            if (!D.empty()) {
+                vector<double> sum(8, 0);
+
+                for (int j = 0; j < 8 && j < D.size(); ++j) {
+                    if (j == 0) {
+                        sum[j] = D[j];
+                    } else {
+                        sum[j] = D[j] + sum[j - 1];
+                    }
+                }
+
+                if (sum[0] < d_particle) delete_condition = true;
+                if (D.size() >= 2 && 0.5 * sum[1] < d_edge) delete_condition = true;
+                if (D.size() >= 4 && 0.25 * sum[3] < d_quad) delete_condition = true;
+                if (D.size() >= 8 && 0.125 * sum[7] < d_hex) delete_condition = true;
+            }
+
+            if (delete_condition) {
+                removed[i] = true;
+            } else {
+                new_particles.push_back(P[i]);
+            }
+        }
+
+        int d_cnt = P.size() - new_particles.size();
+        cout << "Deleted " << d_cnt << " particles" << endl;
+        cout << "Executing particle insertion" << endl;
+
+        vector<ParticleD> candidates;
+        for (int i = 0; i < new_particles.size(); i++) {
+            if (i % 1000 == 0) cout << "Particle Insert: Visiting " << i << "/" <<  new_particles.size() << " particles" << endl;
+            if (new_particles[i].flag != FREE) continue;
+            Vector3d ff[3];
+            ff[0] = FF0T.row(new_particles[i].cell_id);
+            ff[1] = FF1T.row(new_particles[i].cell_id);
+            ff[2] = FF2T.row(new_particles[i].cell_id);
+
+            for (int t = -1, k = 0; k < 6; k++) {
+                t*=-1;
+                ParticleD candidate = new_particles[i];//todo local lattice
+                if(tracing(candidate, t * lattice * ff[k/2]) && candidate.flag == FREE) {
+                    Vector3d v;
+                    to_cartesian(candidate, v);
+                    std::vector<std::pair<size_t, double>> ret_matches;
+                    kdtree.index->radiusSearch(&v[0], n_r * n_r, ret_matches, params);
+
+                    vector<double> D;
+                    for (int j = 0; j < ret_matches.size() && D.size() <= 8; j++) {
+                        if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
+                            D.push_back(sqrt(ret_matches[j].second));
+                        }
+                    }
+
+                    if (!D.empty() && D[0] < 0.7 * lattice) continue;
+
+                    double min_d = 1e20;
+                    for (auto & candi : candidates) {
+                        Vector3d c_v;
+                        to_cartesian(candi, c_v);
+                        min_d = min(min_d, (c_v - v).norm());
+                    }
+
+                    if (min_d < 0.8 * lattice) continue;
+
+                    if (on_boundary(candidate, 0.5 * lattice)) continue;
+
+                    candidates.push_back(candidate);
+                    new_particles.push_back(candidate);
+                }
+            }
+        }
+
+        cout << "deleted " << d_cnt << " particles." << "Inserted " << candidates.size() << " particles." << endl;
+        cout << "-------------------------------" << endl;
+
+        P = new_particles;
+        return candidates.size() == d_cnt;
+    }
 
     bool tracing(Particle<> &p, const Vector3d &v) {
         auto foo = [](const Particle<>& target, double stepLen, double total) {
@@ -181,7 +323,7 @@ public:
             }
     }
     
-    void const to_cartesian(const vector<ParticleD> &A, MatrixXd &P) {
+    void to_cartesian(const vector<ParticleD> &A, MatrixXd &P) {
         P.resize(A.size(), 3);
         for (int i = 0; i < A.size(); i++) {
             if (A[i].flag == FREE) {
@@ -212,6 +354,34 @@ public:
         }
     }
 
+    void to_cartesian(const ParticleD &p, Vector3d &v) {
+        if (p.flag == FREE) {
+            RowVector4i tet_i = TT.row(p.cell_id);
+            RowVector4d bc = p.bc;
+            v = (bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3])).transpose();
+        } else if (p.flag == FACE) {
+            RowVector3i tri_i = TF.row(p.cell_id);
+            RowVector3d bc = p.bc;
+            v = (bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2])).transpose();
+        } else if (p.flag == EDGE) {
+            //TODO 1d support
+            RowVector4i tet_i = TT.row(p.cell_id);
+            RowVector4d bc = p.bc;
+            v = (bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3])).transpose();
+        }
+        else if (p.flag == POINT) {
+            if (p.bc.cols() == 4) {
+                RowVector4i tet_i = TT.row(p.cell_id);
+                RowVector4d bc = p.bc;
+                v = (bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3])).transpose();
+            } else {
+                RowVector3i tri_i = TF.row(p.cell_id);
+                RowVector3d bc = p.bc;
+                v = (bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2])).transpose();
+            }
+        }
+    }
+
     void const to_cartesian(const vector<ParticleD> &A, MatrixXd &PFix, MatrixXd &PFace, MatrixXd &PFree) {
         PFix.resize(0, 3);
         PFree.resize(0, 3);
@@ -239,188 +409,56 @@ public:
         }
     }
 
+    int remove_boundary(vector<ParticleD> &PV, double threshold, bool remove_anchor = false) {
+        vector<ParticleD> new_P;
+        for (int i = 0; i < PV.size(); i++) {
+            if (PV[i].flag == POINT) {
+                if (remove_anchor) continue;
+                if (i >= anchor_cnt) continue;
+            }
 
+            if (PV[i].flag == FACE || PV[i].flag == EDGE) continue;
+            if (PV[i].flag == FREE) {
+                if (on_boundary(PV[i], threshold)) continue;
+            }
 
-    bool particle_insert_and_delete(vector<ParticleD> &P, double n_r, double lattice) {
-        using kdtree_t =
-        KDTreeVectorOfVectorsAdaptor<std::vector<Eigen::Vector3d>, double>;
-        std::cout << "Executing particle deletion scheme" << endl;
-
-        const vector<Vector3d> BCC = {
-                Vector3d(lattice, 0, 0), Vector3d(-lattice, 0, 0), Vector3d(0, lattice, 0),
-                Vector3d(0, -lattice, 0), Vector3d(0, 0, lattice), Vector3d(0, 0, -lattice)
-        };
-        
-        // lattice /= 2;
-        double d_particle = 0.5 * lattice;
-        double d_edge = 0.75 * lattice;
-        double d_quad = 0.9 * lattice;
-        double d_hex = 0.9 * lattice;
-
-        MatrixXd points_mat;
-        vector<Vector3d> points_vec(P.size());
-
-        to_cartesian(P, points_mat);
-        for (int i = 0; i < points_mat.rows(); i++) {
-            Vector3d temp = points_mat.row(i);
-            points_vec[i] = temp;
+            new_P.push_back(PV[i]);
         }
+        int result = PV.size() - new_P.size();
+        PV = new_P;
+        return result;
+    }
 
-        kdtree_t kdtree(3, points_vec, 25);
-        nanoflann::SearchParams params;
-        params.sorted = false;
-
-        vector<ParticleD> new_particles;
-        vector<bool> removed(P.size(), false);
-        for (int i = 0; i < P.size(); i++) {
-            if (P[i].flag == POINT) {
-                new_particles.push_back(P[i]);
-                continue;
+    bool on_boundary(ParticleD p, double threshold) {
+        if (p.flag != FREE) return true;
+        Vector4i tet = TT.row(p.cell_id);
+        Vector3d vp;
+        to_cartesian(p, vp);
+        for (int i = 0; i < 4; i++) { // face
+            vector<int> key(3);
+            key[0] = tet[vertex_of_face[i][0]];
+            key[1] = tet[vertex_of_face[i][1]];
+            key[2] = tet[vertex_of_face[i][2]];
+            sort(key.begin(), key.end());
+            Vector3d v3 = V.row(tet[i]);
+            if (out_face_map.find(key) != out_face_map.end()) {
+                Vector3d v0 = V.row(key[0]);
+                Vector3d v1 = V.row(key[1]);
+                Vector3d v2 = V.row(key[2]);
+                double area = (v0 - v1).cross(v2 - v1).norm() * 0.5;
+                double volume = abs(igl::volume_single(v0, v1, v2, v3)) * p.bc[i];
+                double distance = 3 * volume / area;
+                assert(!isnan(distance));
+                if (distance < threshold) return true;
             }
-
-            bool delete_condition = false;
-            for (int j = 0; j < 6; j++) {
-                ParticleD temp = P[i];
-                tracing(temp, 0.500001 * BCC[j]);
-                if (temp.flag != FREE) {
-                    delete_condition = true;
-                    break;
-                }
-            }
-
-            if (delete_condition) {
-                removed[i] = true;
-                continue;
-            }
-
-            Vector3d p = points_vec[i];
-            vector<double> D;
-
-            std::vector<std::pair<size_t, double>> ret_matches;
-            kdtree.index->radiusSearch(&p[0], n_r * n_r, ret_matches, params);
-
-            for (int j = 0; j < ret_matches.size() && D.size() < 8; j++) {
-                if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
-                    D.push_back(sqrt(ret_matches[j].second));
-                }
-            }
-            sort(D.begin(), D.end());
-
-
-
-            if (D.size() > 1 && D[0] < d_particle) delete_condition = true;
-            if (D.size() > 2 && (D[0] + D[1]) / 2 < d_edge) delete_condition = true;
-            if (D.size() > 4) {
-                double sum = 0;
-                for (int j = 0; j < 4; j++) {
-                    sum += D[j];
-                }
-                sum *= 0.25;
-                if (sum < d_quad) delete_condition = true;
-            }
-            if (D.size() > 8) {
-                double sum = 0;
-                for (int j = 0; j < 8; j++) {
-                    sum += D[j];
-                }
-                sum *= 0.125;
-                if (sum < d_hex) delete_condition = true;
-            }
-            if (delete_condition) {
-                removed[i] = true;
-            } else {
-                new_particles.push_back(P[i]);
+            if (surface_point[tet[i]]) {
+                Vector3d n = per_vertex_normals.row(tet[i]);
+                n.normalize();
+                if (abs((vp - v3).dot(n)) < threshold) return true;
             }
         }
 
-        int d_cnt = P.size() - new_particles.size();
-        cout << "Deleted " << d_cnt << " particles" << endl;
-        cout << "Executing particle insertion" << endl;
-        vector<ParticleD> C;
-        MatrixXd C_mat;
-        double trace_sum_time = 0;
-        double min_sum_time = 0;
-        for (int i = 0; i < new_particles.size(); i++) {
-            if (i % 1000 == 0) cout << "Particle Insert: Visiting " << i << "/" <<  new_particles.size() << " particles" << endl;
-            if (new_particles[i].flag != FREE) continue;
-            Vector3d ff[3];
-            ff[0] = FF0T.row(new_particles[i].cell_id);
-            ff[1] = FF1T.row(new_particles[i].cell_id);
-            ff[2] = FF2T.row(new_particles[i].cell_id);
-
-            vector<ParticleD> candidates;
-
-            std::clock_t start = std::clock();
-
-            for (int j = 0; j < 6; j++) {
-                ParticleD temp = new_particles[i];
-                if(tracing(temp, pow(-1, j) * lattice * ff[j/2])) {
-                    candidates.push_back(temp);
-                }
-            }
-
-            trace_sum_time += (std::clock() - start) / (double) CLOCKS_PER_SEC;
-
-            start = std::clock();
-            MatrixXd candidates_mat;
-            to_cartesian(candidates, candidates_mat);
-            for (int j = 0; j < candidates_mat.rows(); j++) {
-                if (candidates[j].flag != FREE) continue;
-                bool flag = false;
-                for (int k = 0; k < 6; k++) {
-                    ParticleD temp = candidates[j];
-                    if(tracing(temp, pow(-1, k) * 0.5 * lattice * ff[k/2])) {
-                        if (temp.flag != FREE) {
-                            flag = true;
-                            break;
-                        }
-                    } else {
-                        flag = true;
-                        break;
-                    }
-                }
-                if (flag) continue;
-
-                Vector3d c_p = candidates_mat.row(j);
-
-                std::vector<std::pair<size_t, double>> ret_matches;
-                kdtree.index->radiusSearch(&c_p[0], n_r * n_r, ret_matches, params);
-
-
-                vector<double> D;
-                for (int k = 0; k < ret_matches.size() && D.size() <= 8; k++) {
-                    if (removed[ret_matches[k].first]) continue;
-                    D.push_back(ret_matches[k].second);
-                }
-
-                if (D.size() >= 1 && D[0] < 0.8 * lattice) {// TODO locall lattice
-                    continue;
-                }
-
-                // TODO if on boundary
-
-                double min_d = 1e20;
-                for (int k = 0; k < C.size(); k++) {
-                    Vector3d v = C_mat.row(k);
-                    min_d = min(min_d, (v - c_p).norm());
-                }
-
-                if (min_d < 0.8 * lattice) // local lattice
-                    continue;
-
-                new_particles.push_back(candidates[j]);
-                C.push_back(candidates[j]);
-                C_mat.conservativeResize(C_mat.rows() + 1, 3);
-                C_mat.row(C_mat.rows() - 1) = c_p;             
-            }
-            min_sum_time += (std::clock() - start) / (double) CLOCKS_PER_SEC;
-        }
-
-        cout << "deleted " << d_cnt << " particles." << "Inserted " << C.size() << " particles." << "trace: " << trace_sum_time << "s, min: " << min_sum_time << "s." << endl;
-        cout << "-------------------------------" << endl;
-        
-        P = new_particles;
-        return C.size() == d_cnt;
+        return false;
     }
 };
-}
+} // namespace MESHTRACE

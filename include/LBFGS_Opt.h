@@ -3,144 +3,27 @@
 #include "Eigen/Core"
 #include <vector>
 #include "igl/AABB.h"
-#include "kdtree.hpp"
 #include "barycentric_to_cartesian.h"
+#include "KDTreeVectorOfVectorsAdaptor.h"
 #include "LBFGSpp/LBFGS.h"
 #include "MeshTrace/trace_manager.h"
 #include <cmath>
 
 using namespace Eigen;
 using namespace std;
-using namespace NNSearch;
 using namespace LBFGSpp;
 using namespace MESHTRACE;
 
+using kdtree_t =
+KDTreeVectorOfVectorsAdaptor<std::vector<Eigen::Vector3d>, double>;
+
 void LBFGS_optimization(double l,
-        vector<Particle<>> &P,
-        MeshTraceManager<double>& meshtrace) {
-
+        vector<Particle<>> &PV,
+        MeshTraceManager<double>& meshtrace,
+        MatrixXd *debug_test = nullptr) {
+    // LBFGS Routine
     LBFGSParam<double> param;
-    param.epsilon = 1e-6;
-    param.max_iterations = 10;
-    param.max_linesearch = 100;
-    LBFGSSolver<double> solver(param);
-
-    vector<Vector3d> BCC = {
-        Vector3d(l, 0, 0), Vector3d(-l, 0, 0), Vector3d(0, l, 0), 
-        Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
-    };
-    
-    MatrixXd P_in_Cartesian(P.size(), 3);
-
-    // Iteration Factors
-    double sigma = 0.3 * l;
-    int iteration_cnt = 0;
-    int max_iteration = 100;
-
-    while(iteration_cnt++ < 1) {
-        cout << "----------------------------------\n" << iteration_cnt << "th LBFGS iteration" << endl;
-        meshtrace.to_cartesian(P, P_in_Cartesian);
-        auto func = [&] (const VectorXd &x, VectorXd &grad) {
-//            static int call_cnt = 0;
-//            cout << ++call_cnt << " th called" << endl;;
-            int N = x.size() / 3;
-            MatrixXd points_mat(N ,3);
-            for (int i = 0; i < N; i++) {
-                points_mat.row(i) << x[i * 3 + 0], x[i * 3 + 1], x[i * 3 + 2];
-            }
-            
-            const int leaf_size = 5;
-            KDTree kdtree(points_mat, leaf_size);            
-
-            double EN = 0;
-
-            auto g_exp = [=](const Vector3d& v) {
-                double norm = v.norm();
-                return exp(-(norm * norm) / (2 * sigma * sigma));
-            };
-
-//            #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
-            for (int i = 0; i < N; i++) {
-                Particle<> particle = P[i];
-                Vector3d pi = points_mat.row(i);
-                // Update kd tree
-                vector<int> pts_idx;
-                vector<double> pts_dist;
-                kdtree.radiusSearch(pi, 0.8 * l, pts_idx, pts_dist);
-                
-                Vector3d fia = Vector3d::Zero();
-                for (int j = 0; j < pts_idx.size(); j++) {
-                    if (pts_idx[j] == i) continue;
-
-                    Vector3d pj = points_mat.row(pts_idx[j]);
-                    Vector3d vij = pi - pj;
-                    double g_exp_1 = g_exp(vij);
-                    double ENN = 0;
-                    Vector3d fij = Vector3d::Zero();
-                    for (const Vector3d &h: BCC) {
-                        double g_exp_0 = g_exp(vij - h);
-                        ENN -= g_exp_0;
-                        fij -= (vij - h) / (sigma * sigma) * g_exp_0;
-                    }
-                    fij /= 6.;
-                    ENN /= 6.;
-                    Vector3d f = fij + vij / (sigma * sigma) * g_exp_1;
-                    fia += f;
-                    if (particle.flag != POINT) {
-                        EN += ENN + g_exp_1;
-                    }
-                }
-                meshtrace.project(particle, fia);
-
-                grad[i*3 + 0] = -fia[0];
-                grad[i*3 + 1] = -fia[1];
-                grad[i*3 + 2] = -fia[2];
-            }
-//            cout << "E = " << EN << " gnorm: " << grad.norm() << " ";
-//            cout << x.transpose() << endl;
-            return EN;
-        };
-
-        VectorXd x = VectorXd::Zero(P.size() * 3);
-        for (int i = 0; i < P_in_Cartesian.rows(); i++) {
-            x[i * 3 + 0] = P_in_Cartesian(i, 0);
-            x[i * 3 + 1] = P_in_Cartesian(i, 1);
-            x[i * 3 + 2] = P_in_Cartesian(i, 2);
-        }
-        double fx;
-        cout << "LBFGS Begin" << endl;
-        int niter = solver.minimize(func, x, fx);
-        cout << "LBFGS Done" << endl;
-        cout << "f(x) = " << fx << endl;
-        cout << "x = " << x.transpose() << endl;
-        if (isnan(x[0])) {
-            throw runtime_error("LBFGS Failed");
-        }
-
-        for (auto [fx, gnorm] : solver.energy_history) {
-            std::cout << fx << ", " << gnorm << std::endl;
-        }
-
-        for (int i = 0; i < P.size(); i++) {
-//            cout << "dealing with " << i << "/" << P.size() << " particles" << endl;
-            Vector3d displacement;
-            displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);      
-            displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);      
-            displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);      
-//            cout << "start tracing. cell id: " << P[i].cell_id << " bc: " <<P[i].bc << endl;
-//            cout << "d: " << displacement.transpose() << endl;
-            meshtrace.tracing(P[i], displacement);
-        }
-    }
-}
-
-
-void LBFGS_optimization_test(double l,
-                        vector<Particle<>> &P,
-                        MeshTraceManager<double>& meshtrace) {
-
-    LBFGSParam<double> param;
-    param.epsilon = 1e-6;
+    param.epsilon = 1e-15;
     param.max_iterations = 10;
     param.max_linesearch = 100;
     LBFGSSolver<double> solver(param);
@@ -150,106 +33,227 @@ void LBFGS_optimization_test(double l,
             Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
     };
 
-    MatrixXd P_in_Cartesian(P.size(), 3);
+    // Iteration Factors
+    double sigma = 0.3 * l;
+
+    auto func = [&] (const VectorXd &x, VectorXd &grad) {
+        int N = x.size() / 3;
+        vector<Vector3d> points_vec(N);
+        for (int i = 0; i < N; i++) {
+            points_vec[i][0] = x[i * 3 + 0];
+            points_vec[i][1] = x[i * 3 + 1];
+            points_vec[i][2] = x[i * 3 + 2];
+        }
+
+        kdtree_t kdtree(3, points_vec, 25);
+
+        nanoflann::SearchParams params;
+        params.sorted = false;
+
+        auto g_exp = [=](const Vector3d &v) {
+            double norm = v.norm();
+            return std::exp(-(norm * norm) / (2 * sigma * sigma));
+        };
+
+        double EN = 0;
+//            #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
+        for (int i = 0; i < N; i++) {
+            Particle<> particle = PV[i];
+            Vector3d pi = points_vec[i];
+
+            std::vector<std::pair<size_t, double>> ret_matches;
+
+            double n_r = 1.5 * l;
+            kdtree.index->radiusSearch(&pi[0], n_r * n_r, ret_matches, params);
+
+            MatrixXd test(ret_matches.size(), 3);
+
+            Vector3d fia = Vector3d::Zero();
+            for (int j = 0; j < ret_matches.size(); j++) {
+                if (ret_matches[j].first == i) continue;
+
+                Vector3d pj = points_vec[ret_matches[j].first];
+                Vector3d vij = pi - pj;
+                double g_exp_1 = g_exp(vij);
+                double ENN = 0;
+                Vector3d fij = Vector3d::Zero();
+                for (const Vector3d &h: BCC) {
+                    double g_exp_0 = g_exp(vij - h);
+                    ENN -= g_exp_0;
+                    fij -= (vij - h) / (sigma * sigma) * g_exp_0;
+                }
+                fij /= 6.;
+                ENN /= 6.;
+                Vector3d f = fij + vij / (sigma * sigma) * g_exp_1;
+                fia += f;
+                if (particle.flag != POINT) {
+                    EN += ENN + g_exp_1;
+                }
+            }
+            meshtrace.project(particle, fia);
+
+            grad[i * 3 + 0] = -fia[0];
+            grad[i * 3 + 1] = -fia[1];
+            grad[i * 3 + 2] = -fia[2];
+        }
+//            cout << "E = " << EN << " gnorm: " << grad.norm() << " ";
+//            cout << x.transpose() << endl;
+        return EN;
+    };
+
+    MatrixXd P_in_Cartesian;
+    meshtrace.to_cartesian(PV, P_in_Cartesian);
+
+    VectorXd x = VectorXd::Zero(PV.size() * 3);
+    for (int i = 0; i < P_in_Cartesian.rows(); i++) {
+        x[i * 3 + 0] = P_in_Cartesian(i, 0);
+        x[i * 3 + 1] = P_in_Cartesian(i, 1);
+        x[i * 3 + 2] = P_in_Cartesian(i, 2);
+    }
+    double fx;
+    cout << "LBFGS Begin" << endl;
+    int niter = solver.minimize(func, x, fx);
+    cout << "LBFGS Done" << endl;
+    cout << "f(x) = " << fx << endl;
+    cout << "x = " << x.transpose() << endl;
+    if (isnan(x[0])) {
+        throw runtime_error("LBFGS Failed due to nan solution");
+    }
+
+    for (auto [fx_h, gnorm_h] : solver.energy_history) {
+        std::cout << fx_h << ", " << gnorm_h << std::endl;
+    }
+
+    if (debug_test) (*debug_test).resize(PV.size(), 3);
+    for (int i = 0; i < PV.size(); i++) {
+        Vector3d displacement;
+        displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
+        displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
+        displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
+        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
+        cout << "d: " << displacement.transpose() << endl;
+        meshtrace.tracing(PV[i], displacement);
+
+        if (debug_test) {
+            (*debug_test).row(i)[0] = x[i * 3 + 0];
+            (*debug_test).row(i)[1] = x[i * 3 + 1];
+            (*debug_test).row(i)[2] = x[i * 3 + 2];
+        }
+    }
+}
+
+void LBFGS_init(double l,
+                        vector<Particle<>> &PV,
+                        MeshTraceManager<double>& meshtrace,
+                        MatrixXd *debug_test = nullptr) {
+    // LBFGS Routine
+    LBFGSParam<double> param;
+    param.epsilon = 1e-15;
+    param.max_iterations = 10;
+    param.max_linesearch = 100;
+    LBFGSSolver<double> solver(param);
+
+    vector<Vector3d> BCC = {
+            Vector3d(l, 0, 0), Vector3d(-l, 0, 0), Vector3d(0, l, 0),
+            Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
+    };
 
     // Iteration Factors
     double sigma = 0.3 * l;
-    int iteration_cnt = 0;
-    int max_iteration = 100;
 
-    while(iteration_cnt++ < 1) {
-        cout << "----------------------------------\n" << iteration_cnt << "th LBFGS iteration" << endl;
-        meshtrace.to_cartesian(P, P_in_Cartesian);
-        auto func = [&] (const VectorXd &x, VectorXd &grad) {
-//            static int call_cnt = 0;
-//            cout << ++call_cnt << " th called" << endl;;
-            int N = x.size() / 3;
-            MatrixXd points_mat(N ,3);
-            for (int i = 0; i < N; i++) {
-                points_mat.row(i) << x[i * 3 + 0], x[i * 3 + 1], x[i * 3 + 2];
-            }
+    auto func = [&] (const VectorXd &x, VectorXd &grad) {
+        int N = x.size() / 3;
+        vector<Vector3d> points_vec(N);
+        for (int i = 0; i < N; i++) {
+            points_vec[i][0] = x[i * 3 + 0];
+            points_vec[i][1] = x[i * 3 + 1];
+            points_vec[i][2] = x[i * 3 + 2];
+        }
 
-            const int leaf_size = 5;
-            KDTree kdtree(points_mat, leaf_size);
+        kdtree_t kdtree(3, points_vec, 25);
 
-            double EN = 0;
+        nanoflann::SearchParams params;
+        params.sorted = false;
 
-            auto g_exp = [=](const Vector3d& v) {
-                double norm = v.norm();
-                return exp(-(norm * norm) / (2 * sigma * sigma));
-            };
-
-//            #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
-            for (int i = 0; i < N; i++) {
-                Particle<> particle = P[i];
-                Vector3d pi = points_mat.row(i);
-                // Update kd tree
-                vector<int> pts_idx;
-                vector<double> pts_dist;
-                kdtree.radiusSearch(pi, 0.8 * l, pts_idx, pts_dist);
-
-                Vector3d fia = Vector3d::Zero();
-                for (int j = 0; j < pts_idx.size(); j++) {
-                    if (pts_idx[j] == i) continue;
-
-                    Vector3d pj = points_mat.row(pts_idx[j]);
-                    Vector3d vij = pi - pj;
-                    double g_exp_1 = g_exp(vij);
-                    double ENN = 0;
-                    Vector3d fij = Vector3d::Zero();
-                    for (const Vector3d &h: BCC) {
-                        double g_exp_0 = g_exp(vij - h);
-                        ENN -= g_exp_0;
-                        fij -= (vij - h) / (sigma * sigma) * g_exp_0;
-                    }
-                    fij /= 6.;
-                    ENN /= 6.;
-                    Vector3d f = fij + vij / (sigma * sigma) * g_exp_1;
-                    fia += f;
-                    if (particle.flag != POINT) {
-                        EN += ENN + g_exp_1;
-                    }
-                }
-                meshtrace.project(particle, fia);
-
-                grad[i*3 + 0] = -fia[0];
-                grad[i*3 + 1] = -fia[1];
-                grad[i*3 + 2] = -fia[2];
-            }
-//            cout << "E = " << EN << " gnorm: " << grad.norm() << " ";
-//            cout << x.transpose() << endl;
-            return EN;
+        auto g_exp = [=](const Vector3d &v) {
+            double norm = v.norm();
+            return std::exp(-(norm * norm) / (2 * sigma * sigma));
         };
 
-        VectorXd x = VectorXd::Zero(P.size() * 3);
-        for (int i = 0; i < P_in_Cartesian.rows(); i++) {
-            x[i * 3 + 0] = P_in_Cartesian(i, 0);
-            x[i * 3 + 1] = P_in_Cartesian(i, 1);
-            x[i * 3 + 2] = P_in_Cartesian(i, 2);
-        }
-        double fx;
-        cout << "LBFGS Begin" << endl;
-        int niter = solver.minimize(func, x, fx);
-        cout << "LBFGS Done" << endl;
-        cout << "f(x) = " << fx << endl;
-        cout << "x = " << x.transpose() << endl;
-        if (isnan(x[0])) {
-            throw runtime_error("LBFGS Failed");
-        }
+        double EN = 0;
+//            #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
+        for (int i = 0; i < N; i++) {
+            Particle<> particle = PV[i];
+            Vector3d pi = points_vec[i];
 
-        for (auto [fx, gnorm] : solver.energy_history) {
-            std::cout << fx << ", " << gnorm << std::endl;
-        }
+            std::vector<std::pair<size_t, double>> ret_matches;
 
-        for (int i = 0; i < P.size(); i++) {
-//            cout << "dealing with " << i << "/" << P.size() << " particles" << endl;
-            Vector3d displacement;
-            displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
-            displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
-            displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
-//            cout << "start tracing. cell id: " << P[i].cell_id << " bc: " <<P[i].bc << endl;
-//            cout << "d: " << displacement.transpose() << endl;
-            meshtrace.tracing(P[i], displacement);
+            double n_r = 1.5 * l;
+            kdtree.index->radiusSearch(&pi[0], n_r * n_r, ret_matches, params);
+
+            MatrixXd test(ret_matches.size(), 3);
+
+            Vector3d fia = Vector3d::Zero();
+            for (int j = 0; j < ret_matches.size(); j++) {
+                if (ret_matches[j].first == i) continue;
+
+                Vector3d pj = points_vec[ret_matches[j].first];
+                Vector3d vij = pi - pj;
+                double g_exp_1 = g_exp(vij);
+                Vector3d f = vij / (sigma * sigma) * g_exp_1;
+                fia += f;
+                if (particle.flag != POINT) {
+                    EN += g_exp_1;
+                }
+            }
+            meshtrace.project(particle, fia);
+
+            grad[i * 3 + 0] = -fia[0];
+            grad[i * 3 + 1] = -fia[1];
+            grad[i * 3 + 2] = -fia[2];
+        }
+//            cout << "E = " << EN << " gnorm: " << grad.norm() << " ";
+//            cout << x.transpose() << endl;
+        return EN;
+    };
+
+    MatrixXd P_in_Cartesian;
+    meshtrace.to_cartesian(PV, P_in_Cartesian);
+
+    VectorXd x = VectorXd::Zero(PV.size() * 3);
+    for (int i = 0; i < P_in_Cartesian.rows(); i++) {
+        x[i * 3 + 0] = P_in_Cartesian(i, 0);
+        x[i * 3 + 1] = P_in_Cartesian(i, 1);
+        x[i * 3 + 2] = P_in_Cartesian(i, 2);
+    }
+    double fx;
+    cout << "LBFGS Begin" << endl;
+    int niter = solver.minimize(func, x, fx);
+    cout << "LBFGS Done" << endl;
+    cout << "f(x) = " << fx << endl;
+    cout << "x = " << x.transpose() << endl;
+    if (isnan(x[0])) {
+        throw runtime_error("LBFGS Failed due to nan solution");
+    }
+
+    for (auto [fx_h, gnorm_h] : solver.energy_history) {
+        std::cout << fx_h << ", " << gnorm_h << std::endl;
+    }
+
+    if (debug_test) (*debug_test).resize(PV.size(), 3);
+    for (int i = 0; i < PV.size(); i++) {
+        Vector3d displacement;
+        displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
+        displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
+        displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
+        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
+        cout << "d: " << displacement.transpose() << endl;
+        meshtrace.tracing(PV[i], displacement);
+
+        if (debug_test) {
+            (*debug_test).row(i)[0] = x[i * 3 + 0];
+            (*debug_test).row(i)[1] = x[i * 3 + 1];
+            (*debug_test).row(i)[2] = x[i * 3 + 2];
         }
     }
 }
