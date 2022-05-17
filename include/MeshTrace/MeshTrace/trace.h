@@ -47,6 +47,26 @@ struct Particle {
         bc.row(0) << _bc;
         flag = _flag;
     }
+    pair<int, int> get_edge() const {
+        assert(flag == EDGE && "get_edge: particle must on an edge");
+        int ei = int(bc[2]);
+        int ej = int(bc[3]);
+        return make_pair(ei, ej);
+
+    }
+    Vector3d get_edge_coord(const MatrixXd& V) const {
+        Vector3d vi = V.row(int(bc[2]));
+        Vector3d vj = V.row(int(bc[3]));
+        return bc[0] * vi + bc[1] * vj;
+    }
+    Vector3d get_vertex() const {
+        assert(flag == POINT && "get_vertex: particle must be a fixed point");
+        Vector3d v;
+        v[0] = bc[0];
+        v[1] = bc[1];
+        v[2] = bc[2];
+        return v;
+    }
 };
 
 template <typename DerivedB>
@@ -88,10 +108,6 @@ private:
     const Eigen::MatrixX<Scalar> &FF1;
     const Eigen::MatrixX<Scalar> &FF2;
     const Eigen::MatrixX<Scalar> N;
-    std::map<vector<int>, std::pair<int, int>> face_adjacent_map;
-    std::map<std::pair<int, int>, vector<int>> edge_adjacent_map;
-    std::vector<vector<int>> vertice_adjacent_map;
-    std::vector<bool> surface_point; // if ith point in V is on the surface
 
     bool findAdjacentCell(int cell_id, const int *edge, int *new_cell) {
         for (int i = 0; i < T.rows(); i++) {
@@ -243,6 +259,11 @@ private:
 
 
 public:
+    std::map<vector<int>, std::pair<int, int>> face_adjacent_map; // vi vj vk -> tet1 tet2
+    std::map<std::pair<int, int>, vector<int>> edge_adjacent_map; // ei ej -> tet1, 2 ....
+    std::vector<vector<int>> vertice_adjacent_map; // vi -> tet ....
+    std::vector<bool> surface_point; // if ith point in V is on the surface
+
     template <typename F>
     inline bool traceStep(Scalar distance, Particle<Scalar> &start, double direction, Scalar total, Vector3<Scalar> ff, F &callback) {
         Eigen::Matrix<int, 3, 1> cell_i = T.row(start.cell_id);
@@ -516,10 +537,12 @@ public:
                     RowVector4d new_bc;
                     if (new_cell == -1) {
                         igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
-                        start.bc << new_bc;
+                        start.bc[0] = 1 - t;
+                        start.bc[1] = t;
+                        start.bc[2] = (double)cell_i[pos_eb_idx[0]];
+                        start.bc[3] = (double)cell_i[pos_eb_idx[1]];
                         start.flag = EDGE;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                        // TODO check if edge on the surface
                         return true;
                     } else {
                         Vector4i new_t = T.row(new_cell);
@@ -629,7 +652,9 @@ public:
                 RowVector4d new_bc = RowVector4d::Zero();
                 new_bc[pos_eb_idx[0]] = 1.;
 
-                start.bc << new_bc;
+                start.cell_id = cell_i[pos_eb_idx[0]];
+                start.bc.resize(1, 3);
+                start.bc = joint.transpose();
                 start.flag = POINT;
                 callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                 return true;
@@ -740,7 +765,7 @@ public:
               vector<bool> _surface_point
               ):
         V(_V), T(_T), FF0(_FF0), FF1(_FF1), FF2(_FF2),
-        surface_point(_surface_point){
+        surface_point(_surface_point) {
             vertice_adjacent_map.resize(V.rows());
             for (int i = 0; i < T.rows(); i++) {
                 Vector4i tet = T.row(i);
