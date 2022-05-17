@@ -183,6 +183,7 @@ public:
         cout << "Executing particle insertion" << endl;
 
         vector<ParticleD> candidates;
+        MatrixXd candi_mat;
         for (int i = 0; i < new_particles.size(); i++) {
             if (i % 1000 == 0) cout << "Particle Insert: Visiting " << i << "/" <<  new_particles.size() << " particles" << endl;
             if (new_particles[i].flag != FREE) continue;
@@ -209,17 +210,31 @@ public:
 
                     if (!D.empty() && D[0] < 0.7 * lattice) continue;
 
+//                    double min_d = 1e20;
+//                    for (auto & candi : candidates) {
+//                        Vector3d c_v;
+//                        to_cartesian(candi, c_v);
+//                        min_d = min(min_d, (c_v - v).norm());
+//                    }
+
                     double min_d = 1e20;
-                    for (auto & candi : candidates) {
-                        Vector3d c_v;
-                        to_cartesian(candi, c_v);
-                        min_d = min(min_d, (c_v - v).norm());
+
+                    if (candi_mat.rows() != 0) {
+                        Eigen::RowVectorXd row = v.transpose(); // the row you want to replicate
+                        Eigen::MatrixXd Mat(row.colwise().replicate(candi_mat.rows()));
+                        Mat = Mat - candi_mat;
+                        auto arr = Mat.array() * Mat.array();
+                        auto col = arr.col(0) + arr.col(1) + arr.col(2);
+                        min_d = sqrt(col.minCoeff());
                     }
+
 
                     if (min_d < 0.8 * lattice) continue;
 
                     if (on_boundary(candidate, 0.5 * lattice)) continue;
 
+                    candi_mat.conservativeResize(candi_mat.rows() + 1, 3);
+                    candi_mat.row(candi_mat.rows() - 1) = v.transpose();
                     candidates.push_back(candidate);
                     new_particles.push_back(candidate);
                 }
@@ -235,7 +250,7 @@ public:
 
     bool tracing(Particle<> &p, const Vector3d &v) {
         auto foo = [](const Particle<>& target, double stepLen, double total) {
-             cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
+//             cout << "Current step length: " << stepLen << " Total traveled length: " << total << endl;
         };
         if (p.flag == FREE) {
                 // direction to theta and phi

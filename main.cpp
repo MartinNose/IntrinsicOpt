@@ -64,6 +64,8 @@ Eigen::MatrixXd optFix;
 Eigen::MatrixXd optFace;
 Eigen::MatrixXd optFree;
 
+int boundary_count;
+
 MatrixXd B;
 MatrixXd N;
 double l;
@@ -118,7 +120,13 @@ bool key_down(igl::opengl::glfw::Viewer& viewer, unsigned char key, int modifier
     if (key >= '0' && key <= '9') {
         viewer.data().clear();
         viewer.data().set_mesh(V, TF);
-        viewer.data().set_points((debug_point[key - '0']), RowVector3d(0, 0, 0.5));
+        MatrixXd &debug = debug_point[key - '0'];
+        if (debug.rows() > boundary_count) {
+            viewer.data().set_points((debug_point[key - '0'].block(boundary_count, 0, debug_point[key - '0'].rows() - boundary_count, 3)),
+                                     RowVector3d(0, 0, 0.5));
+        } else {
+            viewer.data().set_points(debug, RowVector3d(0, 0, 0.5));
+        }
     }
     return false;
     if (key == '1') {
@@ -156,7 +164,9 @@ int main(int argc, char* argv[]) {
     int col_of_cube;
 //    cin >> col_of_cube;
     col_of_cube = 5;
-    create_trivial_case(V, T, col_of_cube, 0.1);
+//    create_trivial_case(V, T, col_of_cube, 0.1);
+
+    readVTK("/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/joint.vtk", V, T);
 
     MatrixXd FF0T = MatrixXd::Zero(T.rows(), 3);
     MatrixXd FF1T = MatrixXd::Zero(T.rows(), 3);
@@ -167,6 +177,11 @@ int main(int argc, char* argv[]) {
     FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0); // TODO read from zyz
 
     auto[out_face_map, sharp_edge_map, surface_point] = get_surface_mesh(V, T, TF);
+
+    boundary_count =0;
+    for (int i = 0; i < surface_point.size(); i++) {
+        if (surface_point[i]) boundary_count++;
+    }
 
     MatrixXd FF0F, FF1F;
 
@@ -208,8 +223,9 @@ int main(int argc, char* argv[]) {
 //    }
 
 //    l = 0.15000000001;
-    l = 0.10000000001;
+//    l = 0.10000000001;
 //    cin >> l;
+    l = 0.8 * igl::avg_edge_length(V, T);
 
     point_sample_init(V, T, TF, PV, l, out_face_map, meshtrace);
     meshtrace.to_cartesian(PV, debug_point[0]);
@@ -247,7 +263,6 @@ int main(int argc, char* argv[]) {
 
     debug_cnt--;
     cout << "final result: " << (debug_cnt) % 9 + 1 << " debug_mat used: " << debug_cnt << " times" << endl;
-
 
     igl::opengl::glfw::Viewer viewer;
     viewer.data().set_mesh(V, TF);

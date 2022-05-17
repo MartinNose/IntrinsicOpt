@@ -56,7 +56,7 @@ void LBFGS_optimization(double l,
         };
 
         double EN = 0;
-//            #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
+    #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
         for (int i = 0; i < N; i++) {
             Particle<> particle = PV[i];
             Vector3d pi = points_vec[i];
@@ -130,8 +130,8 @@ void LBFGS_optimization(double l,
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
         displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
         displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
-        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
-        cout << "d: " << displacement.transpose() << endl;
+//        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
+//        cout << "d: " << displacement.transpose() << endl;
         meshtrace.tracing(PV[i], displacement);
 
         if (debug_test) {
@@ -181,7 +181,7 @@ void LBFGS_init(double l,
         };
 
         double EN = 0;
-//            #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
+#pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
         for (int i = 0; i < N; i++) {
             Particle<> particle = PV[i];
             Vector3d pi = points_vec[i];
@@ -246,8 +246,8 @@ void LBFGS_init(double l,
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
         displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
         displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
-        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
-        cout << "d: " << displacement.transpose() << endl;
+//        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
+//        cout << "d: " << displacement.transpose() << endl;
         meshtrace.tracing(PV[i], displacement);
 
         if (debug_test) {

@@ -425,7 +425,7 @@ public:
 
         Vec3 displacement = distance * direct;
 
-        cout << "d_trans: " << displacement.transpose() << endl;
+        //cout << "d_trans: " << displacement.transpose() << endl;
 
         Vec3 startPoint = BC[0] * v[0] +  BC[1] * v[1] +  BC[2] * v[2] +  BC[3] * v[3];
         Vec3 end_point = startPoint + displacement;
