@@ -161,15 +161,10 @@ public:
                 double c = ff2.norm();
 
                 double local_lattice = (a + b + c - max(a, max(b, c))) / 2. * lattice;
-//                double d_particle = 0.5 * local_lattice;
-//                double d_edge = 0.75 * local_lattice;
-//                double d_quad = 0.9 * local_lattice;
-//                double d_hex = 0.9 * local_lattice;
-
-                double d_particle = 0.5 * lattice;
-                double d_edge = 0.75 * lattice;
-                double d_quad = 0.9 * lattice;
-                double d_hex = 0.9 * lattice;
+                double d_particle = 0.5 * local_lattice;
+                double d_edge = 0.75 * local_lattice;
+                double d_quad = 0.9 * local_lattice;
+                double d_hex = 0.9 * local_lattice;
 
                 bool delete_condition = false;
                 if (!D.empty()) {
@@ -232,7 +227,7 @@ public:
                         }
                     }
 
-                    if (!D.empty() && D[0] < 0.7 * lattice) continue;
+                    if (!D.empty() && D[0] < 0.7 * local_lattice) continue;
 
                     double min_d = 1e20;
                     if (candi_mat.rows() != 0) {
@@ -244,9 +239,9 @@ public:
                         min_d = sqrt(col.minCoeff());
                     }
 
-                    if (min_d < 0.8 * lattice) continue;
+                    if (min_d < 0.8 * local_lattice) continue;
 
-                    if (on_surface(candidate, 0.5 * lattice)) continue;
+                    if (on_surface(candidate, 0.5 * local_lattice)) continue;
 
                     candi_mat.conservativeResize(candi_mat.rows() + 1, 3);
                     candi_mat.row(candi_mat.rows() - 1) = v.transpose();

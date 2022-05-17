@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
 //    cin >> l;
 //    l = 0.8 * igl::avg_edge_length(V, T);
 
-    l = 0.08;
+    l = 0.10001;
 
     point_sample_init(V, T, TF, PV, l, out_face_map, meshtrace);
     meshtrace.to_cartesian(PV, debug_point[0]);
