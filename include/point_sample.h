@@ -28,16 +28,8 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
             int vi = key[j];
             if (surface.find(vi) != surface.end()) continue;
             surface[vi] = true;
-            RowVector3d bc = Vector3d::Zero();
-            RowVector3i tri = TF.row(val.first);
-            for (int k = 0; k < 3; k++) {
-                if (tri[k] == vi) {
-                    bc[k] = 1.0;
-                    break;
-                }
-            }
-            assert(bc.maxCoeff() >= 0.9);
-            MESHTRACE::Particle<double> temp(val.first, bc, MESHTRACE::POINT);
+            RowVector3d bc = V.row(vi);
+            MESHTRACE::Particle<double> temp(vi, bc, MESHTRACE::POINT);
             P.push_back(temp);
 
             num_in_tet[val.second]++;
