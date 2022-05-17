@@ -164,9 +164,9 @@ int main(int argc, char* argv[]) {
     int col_of_cube;
 //    cin >> col_of_cube;
     col_of_cube = 5;
-//    create_trivial_case(V, T, col_of_cube, 0.1);
+    create_trivial_case(V, T, col_of_cube, 0.1);
 
-    readVTK("/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/joint.vtk", V, T);
+//    readVTK("/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/joint.vtk", V, T);
 
     MatrixXd FF0T = MatrixXd::Zero(T.rows(), 3);
     MatrixXd FF1T = MatrixXd::Zero(T.rows(), 3);
@@ -178,7 +178,7 @@ int main(int argc, char* argv[]) {
 
     auto[out_face_map, sharp_edge_map, surface_point] = get_surface_mesh(V, T, TF);
 
-    boundary_count =0;
+    boundary_count = 0;
     for (int i = 0; i < surface_point.size(); i++) {
         if (surface_point[i]) boundary_count++;
     }
@@ -225,7 +225,9 @@ int main(int argc, char* argv[]) {
 //    l = 0.15000000001;
 //    l = 0.10000000001;
 //    cin >> l;
-    l = 0.8 * igl::avg_edge_length(V, T);
+//    l = 0.8 * igl::avg_edge_length(V, T);
+
+    l = 0.08;
 
     point_sample_init(V, T, TF, PV, l, out_face_map, meshtrace);
     meshtrace.to_cartesian(PV, debug_point[0]);
@@ -237,9 +239,10 @@ int main(int argc, char* argv[]) {
     LBFGS_init(l, PV, meshtrace, &(debug_point[(debug_cnt++) % 9 + 1]));
     meshtrace.to_cartesian(PV, debug_point[2]);
 
-
-    for (int i = 0; i < 4; i++) {
-        meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
+    for (int i = 0; i < 10; i++) {
+        if (meshtrace.particle_insert_and_delete(PV, 1.5 * l, l)) {
+            break;
+        };
         meshtrace.to_cartesian(PV, debug_point[3]);
 
         LBFGS_optimization(l, PV, meshtrace, &(debug_point[4]));
@@ -257,7 +260,6 @@ int main(int argc, char* argv[]) {
 
     meshtrace.remove_boundary(PV, 0.5 * l);
     meshtrace.to_cartesian(PV, debug_point[9]);
-
 
     // TODO Remove boundary
 

@@ -97,7 +97,7 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
 
             point_sample_tet(v[0], v[1], v[2], v[3], bc);
             p.bc = bc;
-        } while(meshtrace.on_boundary(p, 0.5 * l));
+        } while(meshtrace.on_surface(p, 0.5 * l));
         if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {
             std::cout << tet << "th cell with bc: " << bc << std::endl;
         }
@@ -185,7 +185,7 @@ void point_sample(const MatrixXd &V, const MatrixXi &T,
 
             point_sample_tet(v[0], v[1], v[2], v[3], bc);
             p.bc = bc;
-        } while(meshtrace.on_boundary(p, 0.5 * l));
+        } while(meshtrace.on_surface(p, 0.5 * l));
         if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {
             std::cout << tet << "th cell with bc: " << bc << std::endl;
         }

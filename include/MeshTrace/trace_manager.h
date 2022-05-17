@@ -108,17 +108,7 @@ public:
         KDTreeVectorOfVectorsAdaptor<std::vector<Eigen::Vector3d>, double>;
         std::cout << "Executing particle deletion scheme" << endl;
 
-        const vector<Vector3d> BCC = {
-                Vector3d(lattice, 0, 0), Vector3d(-lattice, 0, 0), Vector3d(0, lattice, 0),
-                Vector3d(0, -lattice, 0), Vector3d(0, 0, lattice), Vector3d(0, 0, -lattice)
-        };
-
         // todo local lattice
-
-        double d_particle = 0.5 * lattice;
-        double d_edge = 0.75 * lattice;
-        double d_quad = 0.9 * lattice;
-        double d_hex = 0.9 * lattice;
 
         MatrixXd points_mat;
         vector<Vector3d> points_vec(P.size());
@@ -141,40 +131,69 @@ public:
                 new_particles.push_back(P[i]);
                 continue;
             }
+            if (P[i].flag == FACE) {
+                // TODO
+                new_particles.push_back(P[i]);
+                continue;
+            } else if (P[i].flag == EDGE) {
+                // TODO
+                new_particles.push_back(P[i]);
+                continue;
+            }
+
             Vector3d p = points_vec[i];
             vector<double> D;
 
             std::vector<std::pair<size_t, double>> ret_matches;
             kdtree.index->radiusSearch(&p[0], n_r * n_r, ret_matches, params);
 
-            for (int j = 0; j < ret_matches.size() && D.size() <= 8; j++) {
-                if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
-                    D.push_back(sqrt(ret_matches[j].second));
-                }
-            }
-
-            bool delete_condition = false;
-            if (!D.empty()) {
-                vector<double> sum(8, 0);
-
-                for (int j = 0; j < 8 && j < D.size(); ++j) {
-                    if (j == 0) {
-                        sum[j] = D[j];
-                    } else {
-                        sum[j] = D[j] + sum[j - 1];
+            if (P[i].flag == FREE) {
+                for (int j = 0; j < ret_matches.size() && D.size() <= 8; j++) {
+                    if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
+                        D.push_back(sqrt(ret_matches[j].second));
                     }
                 }
+                Vector3d ff0 = FF0T.row(P[i].cell_id);
+                Vector3d ff1 = FF1T.row(P[i].cell_id);
+                Vector3d ff2 = FF2T.row(P[i].cell_id);
+                double a = ff0.norm();
+                double b = ff1.norm();
+                double c = ff2.norm();
 
-                if (sum[0] < d_particle) delete_condition = true;
-                if (D.size() >= 2 && 0.5 * sum[1] < d_edge) delete_condition = true;
-                if (D.size() >= 4 && 0.25 * sum[3] < d_quad) delete_condition = true;
-                if (D.size() >= 8 && 0.125 * sum[7] < d_hex) delete_condition = true;
-            }
+                double local_lattice = (a + b + c - max(a, max(b, c))) / 2. * lattice;
+//                double d_particle = 0.5 * local_lattice;
+//                double d_edge = 0.75 * local_lattice;
+//                double d_quad = 0.9 * local_lattice;
+//                double d_hex = 0.9 * local_lattice;
 
-            if (delete_condition) {
-                removed[i] = true;
-            } else {
-                new_particles.push_back(P[i]);
+                double d_particle = 0.5 * lattice;
+                double d_edge = 0.75 * lattice;
+                double d_quad = 0.9 * lattice;
+                double d_hex = 0.9 * lattice;
+
+                bool delete_condition = false;
+                if (!D.empty()) {
+                    vector<double> sum(8, 0);
+
+                    for (int j = 0; j < 8 && j < D.size(); ++j) {
+                        if (j == 0) {
+                            sum[j] = D[j];
+                        } else {
+                            sum[j] = D[j] + sum[j - 1];
+                        }
+                    }
+
+                    if (sum[0] < d_particle) delete_condition = true;
+                    if (D.size() >= 2 && 0.5 * sum[1] < d_edge) delete_condition = true;
+                    if (D.size() >= 4 && 0.25 * sum[3] < d_quad) delete_condition = true;
+                    if (D.size() >= 8 && 0.125 * sum[7] < d_hex) delete_condition = true;
+                }
+
+                if (delete_condition) {
+                    removed[i] = true;
+                } else {
+                    new_particles.push_back(P[i]);
+                }
             }
         }
 
@@ -191,6 +210,11 @@ public:
             ff[0] = FF0T.row(new_particles[i].cell_id);
             ff[1] = FF1T.row(new_particles[i].cell_id);
             ff[2] = FF2T.row(new_particles[i].cell_id);
+            double a = ff[0].norm();
+            double b = ff[1].norm();
+            double c = ff[2].norm();
+
+            double local_lattice = (a + b + c - max(a, max(b, c))) / 2. * lattice;
 
             for (int t = -1, k = 0; k < 6; k++) {
                 t*=-1;
@@ -210,15 +234,7 @@ public:
 
                     if (!D.empty() && D[0] < 0.7 * lattice) continue;
 
-//                    double min_d = 1e20;
-//                    for (auto & candi : candidates) {
-//                        Vector3d c_v;
-//                        to_cartesian(candi, c_v);
-//                        min_d = min(min_d, (c_v - v).norm());
-//                    }
-
                     double min_d = 1e20;
-
                     if (candi_mat.rows() != 0) {
                         Eigen::RowVectorXd row = v.transpose(); // the row you want to replicate
                         Eigen::MatrixXd Mat(row.colwise().replicate(candi_mat.rows()));
@@ -228,10 +244,9 @@ public:
                         min_d = sqrt(col.minCoeff());
                     }
 
-
                     if (min_d < 0.8 * lattice) continue;
 
-                    if (on_boundary(candidate, 0.5 * lattice)) continue;
+                    if (on_surface(candidate, 0.5 * lattice)) continue;
 
                     candi_mat.conservativeResize(candi_mat.rows() + 1, 3);
                     candi_mat.row(candi_mat.rows() - 1) = v.transpose();
@@ -291,13 +306,12 @@ public:
 
             return tri_trace.tracing(new_v.norm(), p, theta, foo);
         } else if (p.flag == EDGE) {
-            
+            // TODO
             return false;
         } else if (p.flag == POINT) {
             return true;
         } else {
-            cerr << "illegal flag type" <<endl;
-            exit(-1);
+            assert(false && "Illegal Flag");
         }
     }
 
@@ -311,7 +325,7 @@ public:
                 Vector3d n = (f2 - f0).cross(f1 - f0).normalized();
                 v = v - v.dot(n)*n;
                 return;
-            } else if (p.flag == EDGE) {
+            } else if (p.flag == EDGE) { // TODO change to explicitly show edge index
                 int edge[2];
                 int idx = 0;
                 for (int i = 0; i < 4; i++) {
@@ -434,7 +448,7 @@ public:
 
             if (PV[i].flag == FACE || PV[i].flag == EDGE) continue;
             if (PV[i].flag == FREE) {
-                if (on_boundary(PV[i], threshold)) continue;
+                if (on_surface(PV[i], threshold)) continue;
             }
 
             new_P.push_back(PV[i]);
@@ -444,7 +458,7 @@ public:
         return result;
     }
 
-    bool on_boundary(ParticleD p, double threshold) {
+    bool on_surface(ParticleD p, double threshold) {
         if (p.flag != FREE) return true;
         Vector4i tet = TT.row(p.cell_id);
         Vector3d vp;
@@ -472,8 +486,75 @@ public:
                 if (abs((vp - v3).dot(n)) < threshold) return true;
             }
         }
+        // TODO Check n-ring neighbour if average length of this cell is less than the threshold;
+        return false;
+    }
+
+    bool on_edge(ParticleD p, double threshold) {
+        if (p.flag != FREE) return true;
+        Vector4i tet = TT.row(p.cell_id);
+        Vector3d vp;
+        to_cartesian(p, vp);
+        for (int i = 0; i < 4; i++) { // face
+            vector<int> key(3);
+            key[0] = tet[vertex_of_face[i][0]];
+            key[1] = tet[vertex_of_face[i][1]];
+            key[2] = tet[vertex_of_face[i][2]];
+            sort(key.begin(), key.end());
+            Vector3d v3 = V.row(tet[i]);
+            if (out_face_map.find(key) != out_face_map.end()) {
+                Vector3d v0 = V.row(key[0]);
+                Vector3d v1 = V.row(key[1]);
+                Vector3d v2 = V.row(key[2]);
+                double area = (v0 - v1).cross(v2 - v1).norm() * 0.5;
+                double volume = abs(igl::volume_single(v0, v1, v2, v3)) * p.bc[i];
+                double distance = 3 * volume / area;
+                assert(!isnan(distance));
+                if (distance < threshold) return true;
+            }
+            if (surface_point[tet[i]]) {
+                Vector3d n = per_vertex_normals.row(tet[i]);
+                n.normalize();
+                if (abs((vp - v3).dot(n)) < threshold) return true;
+            }
+        }
+        // TODO Check n-ring neighbour if average length of this cell is less than the threshold;
 
         return false;
     }
+
+    bool on_corner(ParticleD p, double threshold) {
+        if (p.flag != FREE) return true;
+        Vector4i tet = TT.row(p.cell_id);
+        Vector3d vp;
+        to_cartesian(p, vp);
+        for (int i = 0; i < 4; i++) { // face
+            vector<int> key(3);
+            key[0] = tet[vertex_of_face[i][0]];
+            key[1] = tet[vertex_of_face[i][1]];
+            key[2] = tet[vertex_of_face[i][2]];
+            sort(key.begin(), key.end());
+            Vector3d v3 = V.row(tet[i]);
+            if (out_face_map.find(key) != out_face_map.end()) {
+                Vector3d v0 = V.row(key[0]);
+                Vector3d v1 = V.row(key[1]);
+                Vector3d v2 = V.row(key[2]);
+                double area = (v0 - v1).cross(v2 - v1).norm() * 0.5;
+                double volume = abs(igl::volume_single(v0, v1, v2, v3)) * p.bc[i];
+                double distance = 3 * volume / area;
+                assert(!isnan(distance));
+                if (distance < threshold) return true;
+            }
+            if (surface_point[tet[i]]) {
+                Vector3d n = per_vertex_normals.row(tet[i]);
+                n.normalize();
+                if (abs((vp - v3).dot(n)) < threshold) return true;
+            }
+        }
+        // TODO Check n-ring neighbour if average length of this cell is less than the threshold;
+
+        return false;
+    }
+
 };
 } // namespace MESHTRACE
