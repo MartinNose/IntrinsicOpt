@@ -56,11 +56,10 @@ void LBFGS_optimization(double l,
         };
 
         double EN = 0;
-    #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
+    //#pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
         for (int i = 0; i < N; i++) {
             Particle<> particle = PV[i];
             Vector3d pi = points_vec[i];
-
             std::vector<std::pair<size_t, double>> ret_matches;
 
             double n_r = 1.5 * l;
@@ -73,18 +72,26 @@ void LBFGS_optimization(double l,
                 if (ret_matches[j].first == i) continue;
 
                 Vector3d pj = points_vec[ret_matches[j].first];
+                ParticleD particle_j = PV[ret_matches[j].first];
+
+                MatrixXd FF;
+                meshtrace.get_mid_frame(particle, particle_j, FF);
+
+                MatrixXd B = FF.inverse();
+
                 Vector3d vij = pi - pj;
-                double g_exp_1 = g_exp(vij);
+                double g_exp_1 = g_exp(B * vij);
+
                 double ENN = 0;
                 Vector3d fij = Vector3d::Zero();
                 for (const Vector3d &h: BCC) {
-                    double g_exp_0 = g_exp(vij - h);
+                    double g_exp_0 = g_exp(B * vij - h);
                     ENN -= g_exp_0;
-                    fij -= (vij - h) / (sigma * sigma) * g_exp_0;
+                    fij -= (B * vij - h) / (sigma * sigma) * g_exp_0;
                 }
                 fij /= 6.;
                 ENN /= 6.;
-                Vector3d f = fij + vij / (sigma * sigma) * g_exp_1;
+                Vector3d f = FF * fij + vij / (sigma * sigma) * g_exp_1;
                 fia += f;
                 if (particle.flag != POINT) {
                     EN += ENN + g_exp_1;
