@@ -16,6 +16,7 @@
 namespace MESHTRACE {
 
 inline int vertex_of_face[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+inline int edge_of_triangle[3][2] = {{1, 2}, {0, 2}, {0, 1}};
 
 using namespace Eigen;
 template<typename Scalar = double>
@@ -77,9 +78,11 @@ public:
     std::map<vector<int>, vector<int>> adjacent_map;
 
     std::map<vector<int>, pair<int, int>> out_face_map; // map[triangle] = [id_in_TF, id_in_TT}
-    std::vector<bool> surface_point;
+    std::vector<bool> surface_point; // TODO change to set for performance improvement
+    std::map<vector<int>, tuple<int, int, bool>> edge_tri_map; // map[{vi,vj} = {face_i, face_j, if_sharp}
+    std::vector<std::vector<int>> surface_point_adj_faces;
+    std::map<int, std::set<int>> surface_point_adj_sharp_edges;
     int anchor_cnt;
-
 
     MeshTraceManager(
         const Eigen::MatrixX<Scalar> &_V,
@@ -91,15 +94,55 @@ public:
         const Eigen::MatrixX<Scalar> &_FF0F,
         const Eigen::MatrixX<Scalar> &_FF1F,
         std::map<vector<int>, pair<int, int>> &_out_face_map,
-        std::vector<bool> & _surface_point
+        std::vector<bool> & _surface_point, double sharp_threshold = 0.64278760968 // cos(50deg)
     ) : tet_trace(_V, _TT, _FF0T, _FF1T, _FF2T, _surface_point), tri_trace(_V, _TF, _FF0F, _FF1F),
         V(_V), TT(_TT), TF(_TF), FF0T(_FF0T), FF1T(_FF1T), FF2T(_FF2T),
         FF0F(_FF0F), FF1F(_FF1F), out_face_map(_out_face_map), surface_point(_surface_point) {
         igl::per_face_normals(V, TF, tri_normal);
         igl::per_vertex_normals(V, TF, per_vertex_normals);
         anchor_cnt = 0;
-        for(int i = 0; i < surface_point.size(); i++) {
-            if (surface_point[i]) anchor_cnt++;
+        for(auto && i : surface_point) {
+            if (i) anchor_cnt++; // TODO consider remove
+        }
+        surface_point_adj_faces = vector<vector<int>> (TF.rows());
+        for (int i = 0; i < TF.rows(); i++) {
+            Vector3i tri = TF.row(i);
+            for (auto & j : edge_of_triangle) {
+                vector<int> edge = {tri[j[0]], tri[j[1]]};
+                sort(edge.begin(), edge.end());
+                if (edge_tri_map.find(edge) == edge_tri_map.end()) {
+                    edge_tri_map[edge] = make_tuple(i, i, false);
+                } else {
+                    assert(get<0>(edge_tri_map[edge]) == get<0>(edge_tri_map[edge]) && "one edge should only be visited twice");
+                    get<1>(edge_tri_map[edge]) = i;
+                    bool if_sharp = tri_normal.row(get<0>(edge_tri_map[edge])).dot(tri_normal.row(i)) <= sharp_threshold;
+                    get<2>(edge_tri_map[edge]) = if_sharp;
+                    if (if_sharp) {
+                        if (surface_point_adj_sharp_edges.find(edge[0]) != surface_point_adj_sharp_edges.end()) {
+                            surface_point_adj_sharp_edges[edge[0]].insert(edge[1]);
+                        } else {
+                            surface_point_adj_sharp_edges[edge[0]] = {edge[1]};
+                        }
+                        if (surface_point_adj_sharp_edges.find(edge[1]) != surface_point_adj_sharp_edges.end()) {
+                            surface_point_adj_sharp_edges[edge[1]].insert(edge[0]);
+                        } else {
+                            surface_point_adj_sharp_edges[edge[1]] = {edge[0]};
+                        }
+                    }
+                }
+            }
+
+            surface_point_adj_faces[tri[0]].push_back(i);
+            surface_point_adj_faces[tri[1]].push_back(i);
+            surface_point_adj_faces[tri[2]].push_back(i);
+        }
+        cout << "building vertex_adj_faces done" << endl;
+        cout << "building vertex_adj_sharp_edges done" << endl;
+        cout << "building edge_tri_map done" << endl;
+
+        for (int i = 0; i < surface_point_adj_faces.size(); i++) {
+            // TODO if fixed
+            //
         }
     }
 
@@ -222,7 +265,7 @@ public:
 
                     vector<double> D;
                     for (int j = 0; j < ret_matches.size() && D.size() <= 8; j++) {
-                        if (!removed[ret_matches[j].first] && ret_matches[j].first != i) {
+                        if (!removed[ret_matches[j].first]) {
                             D.push_back(sqrt(ret_matches[j].second));
                         }
                     }
@@ -288,8 +331,19 @@ public:
             bool res = tet_trace.tracing(v.norm(), p, direct, foo);
             if (p.flag == FACE) {
                 convert_to_face(p);
+            } else if (p.flag == EDGE) {
+                auto [ei, ej] = p.get_edge();
+                vector<int> edge = {min(ei, ej), max(ei, ej)};
+                assert(edge_tri_map.find(edge) != edge_tri_map.end());
+                auto t = edge_tri_map[edge];
+                if (!get<2>(t)) {
+                    p.flag = FACE;
+                    Vector3d v_ei = V.row(int(p.bc[2]));
+                    Vector3d v_ej = V.row(int(p.bc[3]));
+                    Vector3d v_e = p.bc[0] * v_ei + p.bc[1] * v_ej;
+                }
             }
-            return res;
+            return res; // EDGE will be p {cell_id: one face,
         } else if (p.flag == FACE) {
             Vector3d ff0 = FF0F.row(p.cell_id);
             Vector3d ff1 = FF1F.row(p.cell_id);
@@ -297,12 +351,81 @@ public:
             n.normalize();
             Vector3d new_v = v - v.dot(n) * n;
 
-            double theta = acos(new_v.normalized().dot(ff0));
+            if (new_v.norm() < 1e-6) return true;
+
+            double cos_theta = new_v.normalized().dot(ff0);
+            cos_theta = min(1., cos_theta);
+            cos_theta = max(-1., cos_theta);
+            double theta = acos(cos_theta);
+
+            if (ff0.cross(new_v).dot(n) < -BARYCENTRIC_BOUND) {
+                theta = 2 * igl::PI - theta;
+            }
 
             return tri_trace.tracing(new_v.norm(), p, theta, foo);
         } else if (p.flag == EDGE) {
-            // TODO
-            return false;
+            double distance = v.norm();
+            Vector3d displacement = v;
+
+            while(distance > 1e-6) {
+                Vector3d start = p.get_edge_coord(V);
+
+                pair<int, int> edge_index = p.get_edge();
+                int e_i = edge_index.first;
+                int e_j = edge_index.second;
+
+                Vector3d vi = V.row(e_i);
+                Vector3d vj = V.row(e_j);
+
+                Vector3d edge_v = (vj - vi).normalized();
+
+                distance = displacement.dot(edge_v);
+
+                if (distance < 0) {
+                    e_i = edge_index.second;
+                    e_j = edge_index.first;
+                    vi = V.row(e_i);
+                    vj = V.row(e_j);
+                    edge_v *= -1.;
+                    distance = -distance;
+                }
+
+                if (distance < 1e-6) break;
+                displacement = distance * edge_v;
+
+                // towards e_j
+                if (distance < (vj - start).norm()) { // inside the edge
+                    start += displacement;
+                    double t = (start - vi).norm() / (vj - vi).norm();
+                    p.bc[0] = 1 - t;
+                    p.bc[1] = t;
+                    p.bc[2] = e_i;
+                    p.bc[3] = e_j;
+                    distance  -= distance;
+                } else {
+                    assert(surface_point_adj_sharp_edges.find(e_j) != surface_point_adj_sharp_edges.end());
+                    int e_next;
+                    if (surface_point_adj_sharp_edges[e_j].size() == 2) {
+                        for (int iter : surface_point_adj_sharp_edges[e_j]) {
+                            if (iter == e_i) continue;
+                            e_next = iter;
+                        }
+                        // p with edge e_j e_next
+                        distance -= (vj - start).norm();
+                        displacement = distance * edge_v;
+                        p.bc[0] = 1.;
+                        p.bc[1] = 0.;
+                        p.bc[2] = (double) e_j;
+                        p.bc[3] = (double) e_next;
+                    } else { // make p fixed point
+                        p.flag = POINT;
+                        p.bc.resize(1, 3);
+                        p.bc = vj.transpose();
+                        return true;
+                    }
+                }
+            }
+            return true;
         } else if (p.flag == POINT) {
             return true;
         } else {
@@ -347,7 +470,7 @@ public:
             }
     }
     
-    void to_cartesian(const vector<ParticleD> &A, MatrixXd &P) {
+    void to_cartesian(const vector<ParticleD> &A, MatrixXd &P) { // TODO Upate
         P.resize(A.size(), 3);
         for (int i = 0; i < A.size(); i++) {
             if (A[i].flag == FREE) {
@@ -365,20 +488,12 @@ public:
                 P.row(i) = bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3]);
             }
             else if (A[i].flag == POINT) {
-                if (A[i].bc.cols() == 4) {
-                    RowVector4i tet_i = TT.row(A[i].cell_id);
-                    RowVector4d bc = A[i].bc;
-                    P.row(i) = bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3]);
-                } else {
-                    RowVector3i tri_i = TF.row(A[i].cell_id);
-                    RowVector3d bc = A[i].bc;
-                    P.row(i) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
-                }
+                P.row(i) = V.row(A[i].cell_id);
             } 
         }
     }
 
-    void to_cartesian(const ParticleD &p, Vector3d &v) {
+    void to_cartesian(const ParticleD &p, Vector3d &v) { // TODO Updating
         if (p.flag == FREE) {
             RowVector4i tet_i = TT.row(p.cell_id);
             RowVector4d bc = p.bc;
@@ -388,27 +503,17 @@ public:
             RowVector3d bc = p.bc;
             v = (bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2])).transpose();
         } else if (p.flag == EDGE) {
-            //TODO 1d support
-            RowVector4i tet_i = TT.row(p.cell_id);
-            RowVector4d bc = p.bc;
-            v = (bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3])).transpose();
+            v = p.get_edge_coord(V);
         }
         else if (p.flag == POINT) {
-            if (p.bc.cols() == 4) {
-                RowVector4i tet_i = TT.row(p.cell_id);
-                RowVector4d bc = p.bc;
-                v = (bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3])).transpose();
-            } else {
-                RowVector3i tri_i = TF.row(p.cell_id);
-                RowVector3d bc = p.bc;
-                v = (bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2])).transpose();
-            }
+            v = p.bc;
         }
     }
 
-    void const to_cartesian(const vector<ParticleD> &A, MatrixXd &PFix, MatrixXd &PFace, MatrixXd &PFree) {
+    void const to_cartesian(const vector<ParticleD> &A, MatrixXd &PFix, MatrixXd &PEdge, MatrixXd &PFace, MatrixXd &PFree) {
         PFix.resize(0, 3);
         PFree.resize(0, 3);
+        PEdge.resize(0, 3);
         PFace.resize(0, 3);
         for (int i = 0; i < A.size(); i++) {
             if (A[i].flag == FREE) {
@@ -422,14 +527,15 @@ public:
                 PFace.conservativeResize(PFace.rows() + 1, 3);
                 PFace.row(PFace.rows() - 1) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
             } else if (A[i].flag == EDGE) {
-                // PFree.row(i) = A[i].bc;//TODO 1d support
-            } 
+                Vector3d v = A[i].get_edge_coord(V);
+                PEdge.conservativeResize(PEdge.rows() + 1, 3);
+                PEdge.row(PEdge.rows() - 1) = v.transpose();
+            }
             else if (A[i].flag == POINT) {
-                RowVector3i tri_i = TF.row(A[i].cell_id);
-                RowVector3d bc = A[i].bc;
+                Vector3d v = A[i].bc;
                 PFix.conservativeResize(PFix.rows() + 1, 3);
-                PFix.row(PFix.rows() - 1) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
-            } 
+                PFix.row(PFix.rows() - 1) = v.transpose();
+            }
         }
     }
 
@@ -549,6 +655,69 @@ public:
         // TODO Check n-ring neighbour if average length of this cell is less than the threshold;
 
         return false;
+    }
+
+    size_t get_tet_id(const ParticleD &p) {
+        if (p.flag == FREE) {
+            return p.cell_id;
+        }
+        if (p.flag == FACE) {
+            vector<int> face {TF.row(p.cell_id)[0], TF.row(p.cell_id)[1], TF.row(p.cell_id)[2]};
+            sort(face.begin(), face.end());
+            assert(out_face_map.find(face) != out_face_map.end());
+            return out_face_map[face].second;
+        }
+        if (p.flag == EDGE) {
+            auto [ei, ej] = p.get_edge();
+            vector<int> edge = {min(ei, ej), max(ei, ej)};
+            int face_i = get<0>(edge_tri_map[edge]);
+            vector<int> face {TF.row(face_i)[0], TF.row(face_i)[1], TF.row(face_i)[2]};
+            sort(face.begin(), face.end());
+            assert(out_face_map.find(face) != out_face_map.end());
+            return out_face_map[face].second;
+        }
+        if (p.flag == POINT) {
+            Vector3i tri = TF.row(surface_point_adj_faces[p.cell_id][0]);
+            vector<int> face {tri[0], tri[1], tri[2]};
+            sort(face.begin(), face.end());
+            assert(out_face_map.find(face) != out_face_map.end());
+            return out_face_map[face].second;
+        }
+        assert(false && "invalid flag");
+    }
+
+    void get_frame(int tet, MatrixXd &ff) {
+        ff.resize(3, 3);
+        Vector3d ff0 = FF0T.row(tet);
+        Vector3d ff1 = FF1T.row(tet);
+        Vector3d ff2 = FF2T.row(tet);
+        ff.col(0) = ff0;
+        ff.col(1) = ff1;
+        ff.col(2) = ff2;
+    }
+
+    void get_mid_frame(const ParticleD &pi, const ParticleD &pj, MatrixXd &ff) {
+        Vector3d vi;
+        Vector3d vj;
+        to_cartesian(pi, vi);
+        to_cartesian(pj, vj);
+        ff.resize(3, 3);
+        if (pi.flag == FREE && pj.flag == FREE) {
+            ParticleD temp = pi;
+            tracing(temp, 0.5 * (vj - vi));
+            if (temp.flag == FREE) {
+                ff.col(0) = FF0T.row(temp.cell_id).transpose();
+                ff.col(1) = FF1T.row(temp.cell_id).transpose();
+                ff.col(2) = FF2T.row(temp.cell_id).transpose();
+                return;
+            }
+        }
+
+        MatrixXd ffi, ffj;
+        get_frame(get_tet_id(pi), ffi);
+        get_frame(get_tet_id(pj), ffj);
+
+        ff = 0.5 * (ffi + ffj);
     }
 
 };
