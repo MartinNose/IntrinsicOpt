@@ -2,7 +2,6 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <concepts>
 #include <iostream>
 #include <cmath>
 #include <igl/segment_segment_intersect.h>

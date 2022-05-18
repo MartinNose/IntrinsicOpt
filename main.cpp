@@ -6,17 +6,6 @@
 #include "eigen_binaryIO.h"
 #include <igl/avg_edge_length.h>
 #include <igl/barycenter.h>
-#include <igl/frame_field_deformer.h>
-#include <igl/frame_to_cross_field.h>
-#include <igl/jet.h>
-#include <igl/local_basis.h>
-#include <igl/readDMAT.h>
-#include <igl/readOBJ.h>
-#include <igl/readMSH.h>
-#include <igl/rotate_vectors.h>
-#include <igl/copyleft/comiso/nrosy.h>
-#include <igl/copyleft/comiso/miq.h>
-#include <igl/copyleft/comiso/frame_field.h>
 #include "readVTK.h"
 #include <igl/opengl/glfw/Viewer.h>
 #include <igl/PI.h>

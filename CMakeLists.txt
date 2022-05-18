@@ -13,13 +13,16 @@ if (OPENMP_FOUND)
         message(------------------)
 endif()
 
-include_directories(/usr/local/Cellar/libomp/14.0.0/include)
-
-
-
 list(PREPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 find_package(Eigen3 REQUIRED)
+
+# Libigl
+option(LIBIGL_OPENGL            "Use OpenGL"         ON)
+option(LIBIGL_GLFW       "Use GLFW"           ON)
+include(libigl)
+
+include_directories(utils include) 
 
 # LBFGSpp
 
@@ -42,11 +45,6 @@ target_include_directories(lbfgspp INTERFACE
 target_link_libraries(meshtrace INTERFACE Eigen3::Eigen igl::core)
 
 
-# Libigl
-option(LIBIGL_WITH_OPENGL            "Use OpenGL"         ON)
-option(LIBIGL_WITH_OPENGL_GLFW       "Use GLFW"           ON)
-include(libigl)
-include_directories(utils include) 
 
 set(target_name "IntrinsicOpt")
 
@@ -58,7 +56,7 @@ set_property(TARGET "IntrinsicOpt" PROPERTY CXX_STANDARD 17)
 
 target_link_libraries(${target_name}
         PUBLIC
-        Eigen3::Eigen igl::core igl::opengl_glfw igl::comiso OpenMP::OpenMP_CXX lbfgspp meshtrace
+        Eigen3::Eigen igl::core igl::glfw OpenMP::OpenMP_CXX lbfgspp meshtrace
 )
 
 

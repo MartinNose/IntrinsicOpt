@@ -1,7 +1,6 @@
 #include <iostream>
 #include <string>
 #include <Eigen/Core>
-#include "maxima_funcs.h"
 
 using namespace Eigen;
 using namespace std;
