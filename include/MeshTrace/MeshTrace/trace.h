@@ -416,6 +416,7 @@ public:
             cerr << "Invalid bc" << start.bc << endl;
             assert(start.bc.minCoeff() >= -BARYCENTRIC_BOUND);
         };
+        if (distance < 1e-6) return true;
         Matrix3<Scalar> ff;
         ff.col(0) << FF0.row(start.cell_id)[0], FF0.row(start.cell_id)[1], FF0.row(start.cell_id)[2];
         ff.col(1) << FF1.row(start.cell_id)[0], FF1.row(start.cell_id)[1], FF1.row(start.cell_id)[2];
@@ -430,6 +431,7 @@ public:
 
         Eigen::Matrix<Scalar, 1, DIM> BC;
         BC << start.bc;
+
 
         // Computing the local coordinate of the displacement
         Vec3 ff0 = ff.row(0);
@@ -507,6 +509,8 @@ public:
             start.cell_id = new_cell;
             start.bc.row(0) << bc_joint_tet;
             callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+            double cur_step = (joint - startPoint).norm();
+            if (cur_step < 1e-6) return true;
             return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
         } else if (neg_eb_idx.size() == 2) { // endpoint is on the other side of the edge
             vector<int> face_i ={cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]]};
@@ -553,6 +557,7 @@ public:
                         start.cell_id = new_cell;
                         start.bc.row(0) << new_bc;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        if ((joint - startPoint).norm() < 1e-6) return true;
                         return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                    }
                 }
@@ -583,6 +588,7 @@ public:
                     start.cell_id = new_cell;
                     start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                    if ((joint - startPoint).norm() < 1e-6) return true;
                     return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                 }
             }
@@ -644,6 +650,7 @@ public:
                         start.cell_id = candidates[i];
                         start.bc << temp_bc;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        if ((joint - startPoint).norm() < 1e-6) return true;
                         return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                     }
                 }
@@ -737,6 +744,7 @@ public:
                     start.cell_id = new_cell;
                     start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                    if ((joint - startPoint).norm() < 1e-6) return true;
                     return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                 }
             }
@@ -807,7 +815,6 @@ public:
     template <typename F>
     inline bool tracing(Scalar distance, Particle<double> &start, double direction, F &callback) {
         return traceStep<F>(distance, start, direction, 0, Vector3<Scalar>(FF0.row(start.cell_id)),callback);
-
     }
 };
 }

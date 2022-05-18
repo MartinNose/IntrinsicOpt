@@ -56,7 +56,7 @@ void LBFGS_optimization(double l,
         };
 
         double EN = 0;
-    //#pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
+    #pragma omp parallel for reduction(+ : EN) // NOLINT(openmp-use-default-none)
         for (int i = 0; i < N; i++) {
             Particle<> particle = PV[i];
             Vector3d pi = points_vec[i];

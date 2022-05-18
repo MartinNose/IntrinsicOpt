@@ -17,6 +17,10 @@ namespace MESHTRACE {
 
 inline int vertex_of_face[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
 inline int edge_of_triangle[3][2] = {{1, 2}, {0, 2}, {0, 1}};
+inline Vector3d BCC[6] = {
+    Vector3d(1., 0, 0), Vector3d(-1., 0, 0), Vector3d(0, 1., 0),
+    Vector3d(0, -1., 0), Vector3d(0, 0, 1.), Vector3d(0, 0, -1.)
+};
 
 using namespace Eigen;
 template<typename Scalar = double>
@@ -254,10 +258,11 @@ public:
 
             double local_lattice = (a + b + c - max(a, max(b, c))) / 2. * lattice;
 
-            for (int t = -1, k = 0; k < 6; k++) {
-                t*=-1;
+            double t = -1.;
+            for (int k = 0; k < 6; k++) {
+                t*=-1.;
                 ParticleD candidate = new_particles[i];//todo local lattice
-                if(tracing(candidate, t * lattice * ff[k/2]) && candidate.flag == FREE) {
+                if(tracing(candidate, t * local_lattice * ff[k/2]) && candidate.flag == FREE) {
                     Vector3d v;
                     to_cartesian(candidate, v);
                     std::vector<std::pair<size_t, double>> ret_matches;

@@ -28,6 +28,7 @@
 #include "LBFGS_Opt.h"
 #include "surface_mesh.h"
 #include "trivial_case.h"
+#include "read_zyz.h"
 
 // Input frame field constraints
 
@@ -161,20 +162,19 @@ void log() {
 int main(int argc, char* argv[]) {
 //    readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
     // readVTK(datapath "trivial.vtk", V, T);
-    int col_of_cube;
+//    int col_of_cube;
 //    cin >> col_of_cube;
-    col_of_cube = 5;
-    create_trivial_case(V, T, col_of_cube, 0.1);
+//    col_of_cube = 5;
+//    create_trivial_case(V, T, col_of_cube, 0.1);
 
-//    readVTK("/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/joint.vtk", V, T);
+    readVTK("/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/joint.vtk", V, T);
 
-    MatrixXd FF0T = MatrixXd::Zero(T.rows(), 3);
-    MatrixXd FF1T = MatrixXd::Zero(T.rows(), 3);
-    MatrixXd FF2T = MatrixXd::Zero(T.rows(), 3);
+    MatrixXd FF0T;
+    MatrixXd FF1T;
+    MatrixXd FF2T;
 
-    FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0); // TODO read from zyz
+    read_zyz("/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/mesh.zyz", FF0T, FF1T, FF2T);
+    assert(FF0T.rows() == T.rows() && FF1T.rows() == T.rows() && FF2T.rows() == T.rows());
 
     auto[out_face_map, sharp_edge_map, surface_point] = get_surface_mesh(V, T, TF);
 
@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
 //    cin >> l;
 //    l = 0.8 * igl::avg_edge_length(V, T);
 
-    l = 0.10001;
+    l = 0.030802;
 
     point_sample_init(V, T, TF, PV, l, out_face_map, meshtrace);
     meshtrace.to_cartesian(PV, debug_point[0]);
