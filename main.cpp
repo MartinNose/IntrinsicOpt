@@ -1,19 +1,11 @@
 #include <iostream>
-#include <cstdlib>
-#include <exception>
-#include <igl/opengl/glfw/Viewer.h>
 #include "Eigen/Core"
-#include "eigen_binaryIO.h"
-#include <igl/avg_edge_length.h>
 #include <igl/barycenter.h>
 #include "readVTK.h"
-#include <igl/opengl/glfw/Viewer.h>
 #include <igl/PI.h>
 #include "MeshTrace/trace.h"
 #include "MeshTrace/trace_manager.h"
 #include "point_sample.h"
-#include "barycentric_to_cartesian.h"
-#include "omp.h"
 #include "LBFGS_Opt.h"
 #include "surface_mesh.h"
 #include "trivial_case.h"
@@ -24,12 +16,7 @@
 using namespace std;
 using namespace Eigen;
 
-
-
 #define datapath "/Users/liujunliang/Documents/Codes/IntrinsicOpt/dataset/"
-
-#define PV_TO_VIEW meshtrace.to_cartesian(PV, debug_point[(debug_cnt++) % 9 + 1]);
-
 
 Eigen::MatrixXd V;
 Eigen::MatrixXi T;
@@ -103,50 +90,6 @@ void callback(const ParticleD& target, double stepLen, double total) {
         stepCallback(target, stepLen, total);
 }
 
-bool key_down(igl::opengl::glfw::Viewer& viewer, unsigned char key, int modifier) {
-    using namespace std;
-    using namespace Eigen;
-
-    if (key >= '0' && key <= '9') {
-        viewer.data().clear();
-        viewer.data().set_mesh(V, TF);
-        MatrixXd &debug = debug_point[key - '0'];
-        if (debug.rows() > boundary_count) {
-            viewer.data().set_points((debug_point[key - '0'].block(boundary_count, 0, debug_point[key - '0'].rows() - boundary_count, 3)),
-                                     RowVector3d(0, 0, 0.5));
-        } else {
-            viewer.data().set_points(debug, RowVector3d(0, 0, 0.5));
-        }
-    }
-    return false;
-    if (key == '1') {
-        viewer.data().set_points(ranFix, RowVector3d(0, 0, 0.5));
-    } else if (key == '2') {
-        viewer.data().set_points(ranFace, RowVector3d(0, 0.5, 0));
-    } else if (key == '3') {
-        viewer.data().set_points(ranFree, RowVector3d(0.5, 0, 0));
-    } else if (key == '4') {
-        viewer.data().set_points(diFix, RowVector3d(0, 0, 0.5));
-    } else if (key == '5') {
-        viewer.data().set_points(diFace, RowVector3d(0, 0.5, 0));
-    } else if (key == '6') {
-        viewer.data().set_points(diFree, RowVector3d(0.5, 0, 0));
-    } else if (key == '7') {
-        viewer.data().set_points(optFix, RowVector3d(0, 0, 0.5));
-    } else if (key == '8') {
-        viewer.data().set_points(optFace, RowVector3d(0, 0.5, 0));
-    } else if (key == '9') {
-        viewer.data().set_points(optFree, RowVector3d(0.5, 0, 0));
-    }    
-    return false;
-}
-
-void log() {
-    igl::opengl::glfw::Viewer viewer;
-    viewer.callback_key_down = &key_down;
-    key_down(viewer,'1',0);
-    viewer.launch();
-}
 
 int main(int argc, char* argv[]) {
 //    readVTK(datapath "l1-poly-dat/hex/kitty/orig.tet.vtk", V, T);
@@ -251,16 +194,6 @@ int main(int argc, char* argv[]) {
     meshtrace.to_cartesian(PV, debug_point[9]);
 
     // TODO Remove boundary
-
-    debug_cnt--;
-    cout << "final result: " << (debug_cnt) % 9 + 1 << " debug_mat used: " << debug_cnt << " times" << endl;
-
-    igl::opengl::glfw::Viewer viewer;
-    viewer.data().set_mesh(V, TF);
-    viewer.callback_key_down = &key_down;
-
-    viewer.data().set_points(trace_points, RowVector3d{0, 0, 1});
-    viewer.launch();
 
     return 0;
 }
