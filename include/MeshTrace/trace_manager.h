@@ -2,6 +2,7 @@
 #include <iostream>
 #include "MeshTrace/trace.h"
 #include <igl/per_face_normals.h>
+#include <igl/per_vertex_normals.h>
 #include <igl/barycentric_coordinates.h>
 #include <igl/doublearea.h>
 #include "Eigen/Core"
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <map>
 #include <vector>
+#include <set>
 #include <ctime>
 #include <functional>
 #include "KDTreeVectorOfVectorsAdaptor.h"
