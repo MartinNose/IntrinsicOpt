@@ -5,6 +5,8 @@
 #include <igl/per_vertex_normals.h>
 #include <igl/barycentric_coordinates.h>
 #include <igl/doublearea.h>
+#include <igl/AABB.h>
+#include <igl/in_element.h>
 #include "Eigen/Core"
 #include <cmath>
 #include <algorithm>
@@ -28,6 +30,7 @@ using namespace Eigen;
 template<typename Scalar = double>
 class MeshTraceManager {
 private:
+    igl::AABB<Eigen::MatrixXd, 3> tree;
     void convert_to_face(Particle<> &p) {
         assert(p.flag == FACE && p.bc.cols() == 4);
         using namespace igl;
@@ -146,9 +149,21 @@ public:
         cout << "building vertex_adj_sharp_edges done" << endl;
         cout << "building edge_tri_map done" << endl;
 
-        for (int i = 0; i < surface_point_adj_faces.size(); i++) {
-            // TODO if fixed
-            //
+        tree.init(V, TT);
+
+        // for (int i = 0; i < surface_point_adj_faces.size(); i++) {
+        //     // TODO if fixed
+        //     //
+        // }
+    }
+
+    int in_element(Vector3d p) {
+        VectorXi I;
+        igl::in_element(V, TT, p.transpose(), tree, I);
+        if (I.size() > 0 && I[0] >= 0) {
+            return I[0];
+        } else {
+            return -1;
         }
     }
 
@@ -264,14 +279,19 @@ public:
             for (int k = 0; k < 6; k++) {
                 t*=-1.;
                 ParticleD candidate = new_particles[i];//todo local lattice
-                if(tracing(candidate, t * local_lattice * ff[k/2]) && candidate.flag == FREE) {
-                    Vector3d v;
-                    to_cartesian(candidate, v);
+                Vector3d v;
+                to_cartesian(candidate, v);
+                Vector3d c = v + t * local_lattice * ff[k/2];
+                if (ff[k/2].norm() < 0.7) continue;
+
+                int tet = in_element(c);
+               
+                if(tet != -1) {
                     std::vector<std::pair<size_t, double>> ret_matches;
-                    kdtree.index->radiusSearch(&v[0], n_r * n_r, ret_matches, params);
+                    kdtree.index->radiusSearch(&c[0], n_r * n_r, ret_matches, params);
 
                     vector<double> D;
-                    for (int j = 0; j < ret_matches.size() && D.size() <= 8; j++) {
+                    for (int j = 0; j < ret_matches.size() && D.size() < 1; j++) {
                         if (!removed[ret_matches[j].first]) {
                             D.push_back(sqrt(ret_matches[j].second));
                         }
@@ -281,7 +301,7 @@ public:
 
                     double min_d = 1e20;
                     if (candi_mat.rows() != 0) {
-                        Eigen::RowVectorXd row = v.transpose(); // the row you want to replicate
+                        Eigen::RowVectorXd row = c.transpose();
                         Eigen::MatrixXd Mat(row.colwise().replicate(candi_mat.rows()));
                         Mat = Mat - candi_mat;
                         auto arr = Mat.array() * Mat.array();
@@ -291,12 +311,18 @@ public:
 
                     if (min_d < 0.8 * local_lattice) continue;
 
-                    if (on_surface(candidate, 0.5 * local_lattice)) continue;
+                    RowVector4d bc;
+                    igl::barycentric_coordinates(c.transpose(), 
+                        V.row(TT.row(tet)[0]), V.row(TT.row(tet)[1]), V.row(TT.row(tet)[2]), V.row(TT.row(tet)[3]), 
+                        bc);
+                    ParticleD inserted(tet, bc, FREE);
+                    
+                    if (on_surface(inserted, 0.5 * local_lattice)) continue;
 
                     candi_mat.conservativeResize(candi_mat.rows() + 1, 3);
-                    candi_mat.row(candi_mat.rows() - 1) = v.transpose();
-                    candidates.push_back(candidate);
-                    new_particles.push_back(candidate);
+                    candi_mat.row(candi_mat.rows() - 1) = c.transpose();
+                    candidates.push_back(inserted);
+                    new_particles.push_back(inserted);
                 }
             }
         }
@@ -441,40 +467,21 @@ public:
     }
 
     inline void project(const Particle<>& p, Vector3d &v) {
-            if (p.flag == FREE) {
-                return;
-            } else if (p.flag == FACE) {
-                Vector3d f0 = V.row(TF.row(p.cell_id)[0]);
-                Vector3d f1 = V.row(TF.row(p.cell_id)[1]);
-                Vector3d f2 = V.row(TF.row(p.cell_id)[2]);
-                Vector3d n = (f2 - f0).cross(f1 - f0).normalized();
-                v = v - v.dot(n)*n;
-                return;
-            } else if (p.flag == EDGE) { // TODO change to explicitly show edge index
-                int edge[2];
-                int idx = 0;
-                for (int i = 0; i < 4; i++) {
-                    if (p.bc[i] < BARYCENTRIC_BOUND) {
-                        continue;
-                    }
-                    if (idx == 3) {
-                        cerr << "logic error: Face particle doesn't meet constraints." << endl;
-                        cout << p.cell_id << endl; 
-                        cout << p.bc << endl;
-                        exit(-1);
-                    }
-                    edge[idx++] = i;
-                }
-                Vector3d v0 = V.row(TF.row(p.cell_id)[edge[0]]);
-                Vector3d v1 = V.row(TF.row(p.cell_id)[edge[1]]);
-
-                Vector3d e = (v1 - v0).normalized();
-                v = v.dot(e) * e;
-                return; 
-            } else if (p.flag == POINT) {
-                v = Vector3d::Zero();
-                return;
-            }
+        if (p.flag == FREE) {
+            return;
+        } else if (p.flag == FACE) {
+            Vector3d n = tri_normal.row(p.cell_id);
+            v = v - v.dot(n)*n;
+            return;
+        } else if (p.flag == EDGE) { // TODO change to explicitly show edge index
+            auto [ei, ej] = p.get_edge();
+            Vector3d e = V.row(ei) - V.row(ej);
+            v = v.dot(e) * e;
+            return; 
+        } else if (p.flag == POINT) {
+            v = Vector3d::Zero();
+            return;
+        }
     }
     
     void to_cartesian(const vector<ParticleD> &A, MatrixXd &P) { // TODO Upate
@@ -490,9 +497,8 @@ public:
                 P.row(i) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
             } else if (A[i].flag == EDGE) {
                 //TODO 1d support
-                RowVector4i tet_i = TT.row(A[i].cell_id);
-                RowVector4d bc = A[i].bc;
-                P.row(i) = bc[0] * V.row(tet_i[0]) + bc[1] * V.row(tet_i[1]) + bc[2] * V.row(tet_i[2]) + bc[3] * V.row(tet_i[3]);
+                Vector3d v = A[i].get_edge_coord(V);
+                P.row(i) = v.transpose();
             }
             else if (A[i].flag == POINT) {
                 P.row(i) = V.row(A[i].cell_id);
@@ -535,8 +541,7 @@ public:
                 PFace.row(PFace.rows() - 1) = bc[0] * V.row(tri_i[0]) + bc[1] * V.row(tri_i[1]) + bc[2] * V.row(tri_i[2]);
             } else if (A[i].flag == EDGE) {
                 Vector3d v = A[i].get_edge_coord(V);
-                PEdge.conservativeResize(PEdge.rows() + 1, 3);
-                PEdge.row(PEdge.rows() - 1) = v.transpose();
+                PEdge.row(i) = v.transpose();
             }
             else if (A[i].flag == POINT) {
                 Vector3d v = A[i].bc;
@@ -695,36 +700,21 @@ public:
 
     void get_frame(int tet, MatrixXd &ff) {
         ff.resize(3, 3);
-        Vector3d ff0 = FF0T.row(tet);
-        Vector3d ff1 = FF1T.row(tet);
-        Vector3d ff2 = FF2T.row(tet);
-        ff.col(0) = ff0;
-        ff.col(1) = ff1;
-        ff.col(2) = ff2;
+        ff.col(0) = FF0T.row(tet).transpose();
+        ff.col(1) = FF1T.row(tet).transpose();
+        ff.col(2) = FF2T.row(tet).transpose();
     }
 
-    void get_mid_frame(const ParticleD &pi, const ParticleD &pj, MatrixXd &ff) {
-        Vector3d vi;
-        Vector3d vj;
-        to_cartesian(pi, vi);
-        to_cartesian(pj, vj);
-        ff.resize(3, 3);
-        if (pi.flag == FREE && pj.flag == FREE) {
-            ParticleD temp = pi;
-            tracing(temp, 0.5 * (vj - vi));
-            if (temp.flag == FREE) {
-                ff.col(0) = FF0T.row(temp.cell_id).transpose();
-                ff.col(1) = FF1T.row(temp.cell_id).transpose();
-                ff.col(2) = FF2T.row(temp.cell_id).transpose();
-                return;
-            }
+    void get_mid_frame(const Vector3d &vi, const Vector3d &vj, Matrix3d &ff) {
+        int tet = in_element((vi + vj) * 0.5);
+        if (tet != -1) {
+            ff.col(0) = FF0T.row(tet).transpose();
+            ff.col(1) = FF1T.row(tet).transpose();
+            ff.col(2) = FF2T.row(tet).transpose();
+            return;
+        } else {
+            ff = MatrixXd::Identity(3, 3);
         }
-
-        MatrixXd ffi, ffj;
-        get_frame(get_tet_id(pi), ffi);
-        get_frame(get_tet_id(pj), ffj);
-
-        ff = 0.5 * (ffi + ffj);
     }
 
 };

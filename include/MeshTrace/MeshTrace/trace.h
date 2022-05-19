@@ -51,7 +51,6 @@ struct Particle {
         int ei = int(bc[2]);
         int ej = int(bc[3]);
         return make_pair(ei, ej);
-
     }
     Vector3d get_edge_coord(const MatrixXd& V) const {
         Vector3d vi = V.row(int(bc[2]));
@@ -339,8 +338,6 @@ public:
                         std::cerr << "Encountering Crossing vertex case" << std::endl;
                         return false;
                     }
-
-                    std:: cout << "u: " << u << " t: " << t << std::endl;
 
                     int newCellId;
 

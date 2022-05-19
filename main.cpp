@@ -131,9 +131,6 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     //     FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
     //     FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
     //     FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
-        
-    //     RowVector3d X{1.0, 0, 0};
-    //     RowVector3d Z{0, 0, 1.0};
     // }
 
     write_vtk_points("xxx.vtk", V);
@@ -194,6 +191,7 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     if (debug_mode) meshtrace.to_cartesian(PV, debug_point[2]);
 
     for (int i = 0; i < 10; i++) {
+        cout << "iteration: " << i + 1 << endl;
         if (meshtrace.particle_insert_and_delete(PV, 1.5 * l, l)) {
             break;
         };
@@ -217,7 +215,9 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
 
     // if (argc == 5 || argc == 6) 
     write_vtk_points("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", debug_point[9]);
-    
+    write_binary("inner_points", debug_point[9]);
+
+
     if (argc == 3) {
         // write all to vtk
     }

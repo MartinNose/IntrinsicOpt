@@ -53,7 +53,7 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
     }
     // Total number of points
     cout << "lattice: " << l << endl;
-    int total = ceil(total_volume / pow(l, 3) * 2);
+    int total = ceil(total_volume / pow(l, 3) * 8);
     int n = max(total - (int)P.size(), 1); // to add
     cout << "Boundary points: " << P.size() << endl;
     cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;

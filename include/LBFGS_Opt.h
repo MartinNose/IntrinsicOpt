@@ -25,9 +25,9 @@ void LBFGS_optimization(double l,
         MatrixXd *debug_test = nullptr) {
     // LBFGS Routine
     LBFGSParam<double> param;
-    param.epsilon = 1e-15;
+    param.epsilon = 1e-6;
     param.max_iterations = 10;
-    param.max_linesearch = 100;
+    // param.max_linesearch = 100;
     LBFGSSolver<double> solver(param);
 
     vector<Vector3d> BCC = {
@@ -62,24 +62,27 @@ void LBFGS_optimization(double l,
         for (int i = 0; i < N; i++) {
             Particle<> particle = PV[i];
             Vector3d pi = points_vec[i];
+            if (particle.flag == POINT) {
+                grad[i * 3 + 0] = 0.;
+                grad[i * 3 + 1] = 0.;
+                grad[i * 3 + 2] = 0.; 
+                continue;
+            }
             std::vector<std::pair<size_t, double>> ret_matches;
 
             double n_r = 1.5 * l;
             kdtree.index->radiusSearch(&pi[0], n_r * n_r, ret_matches, params);
-
-            MatrixXd test(ret_matches.size(), 3);
 
             Vector3d fia = Vector3d::Zero();
             for (int j = 0; j < ret_matches.size(); j++) {
                 if (ret_matches[j].first == i) continue;
 
                 Vector3d pj = points_vec[ret_matches[j].first];
-                ParticleD particle_j = PV[ret_matches[j].first];
 
-                MatrixXd FF;
-                meshtrace.get_mid_frame(particle, particle_j, FF);
+                Matrix3d FF;
+                meshtrace.get_mid_frame(pi, pj, FF);
 
-                MatrixXd B = FF.inverse();
+                Matrix3d B = FF.inverse();
 
                 Vector3d vij = pi - pj;
                 double g_exp_1 = g_exp(B * vij);
@@ -95,16 +98,15 @@ void LBFGS_optimization(double l,
                 ENN /= 6.;
                 Vector3d f = FF * fij + vij / (sigma * sigma) * g_exp_1;
                 fia += f;
-                if (particle.flag != POINT) {
-                    EN += ENN + g_exp_1;
-                }
+                EN += ENN + g_exp_1;
             }
-            meshtrace.project(particle, fia);
-
+            if (particle.flag != FREE) meshtrace.project(particle, fia);
+            
             grad[i * 3 + 0] = -fia[0];
             grad[i * 3 + 1] = -fia[1];
             grad[i * 3 + 2] = -fia[2];
         }
+        std::cout << "E: " << EN << " gnorm: " << grad.norm() << std::endl;
         return EN;
     };
 
