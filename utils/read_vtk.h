@@ -1,3 +1,4 @@
+#pragma once
 #include <iostream>
 #include <fstream>
 #include "Eigen/Core"
@@ -5,7 +6,7 @@
 using namespace Eigen;
 using namespace std;
 
-void readVTK(const std::string& path, MatrixXd &V, MatrixXi &T) {
+void read_vtk(const std::string& path, MatrixXd &V, MatrixXi &T) {
     cout << "Reading input from " << path << endl;
     std::ifstream input_s(path);
 
@@ -17,7 +18,6 @@ void readVTK(const std::string& path, MatrixXd &V, MatrixXi &T) {
             istringstream ls(line);
             string tmp;
             ls >> tmp >> tmp;
-
             V_num = stoi(tmp);
             break;
         }
@@ -66,3 +66,25 @@ void readVTK(const std::string& path, MatrixXd &V, MatrixXi &T) {
     }
 
 } 
+
+void write_vtk_points(const std::string& path, MatrixXd &V) {
+    std::ofstream out(path);
+    out << "# vtk DataFile Version 2.0\n"
+            "TET\n"
+            "ASCII\n"
+
+            "DATASET UNSTRUCTURED_GRID\n";
+    int n = V.rows();
+    out << "POINTS " << n << " double\n";
+    for (int i = 0; i < n; i++) {
+        out << V.row(i)[0] << " " << V.row(i)[1] << " " << V.row(i)[2] << "\n";
+    }
+    out << "CELLS " << n << " " << 2 * n << "\n";
+    for (int i = 0; i < n; i++) {
+        out << "1 " << i << "\n";
+    }
+    out << "CELL_TYPES " << n << "\n";
+    for (int i = 0; i < n; i++) {
+        out << "1\n";
+    }
+}

@@ -106,7 +106,7 @@ private:
     const Eigen::MatrixX<Scalar> &FF0;
     const Eigen::MatrixX<Scalar> &FF1;
     const Eigen::MatrixX<Scalar> &FF2;
-    const Eigen::MatrixX<Scalar> N;
+    Eigen::MatrixX<Scalar> N;
 
     bool findAdjacentCell(int cell_id, const int *edge, int *new_cell) {
         for (int i = 0; i < T.rows(); i++) {
@@ -265,6 +265,7 @@ public:
 
     template <typename F>
     inline bool traceStep(Scalar distance, Particle<Scalar> &start, double direction, Scalar total, Vector3<Scalar> ff, F &callback) {
+        if (distance < 1e-6) return true;
         Eigen::Matrix<int, 3, 1> cell_i = T.row(start.cell_id);
         Eigen::Matrix<Scalar, 3, 3> Cell;
         
@@ -367,9 +368,9 @@ public:
                     start.bc.row(0) << bc.row(0);
                     Scalar traveledDistance = u * (endPoint - startPoint).norm();
 
-                    std::cout << "*************************" << std::endl;
-                    std::cout << "startPoint: " << startPoint.transpose() << std::endl;
-                    std::cout << "endPoint: " << (startPoint + u * (endPoint - startPoint)).transpose() << std::endl;
+                    // std::cout << "*************************" << std::endl;
+                    // std::cout << "startPoint: " << startPoint.transpose() << std::endl;
+                    // std::cout << "endPoint: " << (startPoint + u * (endPoint - startPoint)).transpose() << std::endl;
 
                     callback(start, traveledDistance, total);
                     if (traveledDistance < EPSILON) {
@@ -515,8 +516,6 @@ public:
             vector<int> face_i ={cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]]};
             Vec3 edge[2] = {v[pos_eb_idx[0]], v[pos_eb_idx[1]]};
             // if joint on the edge
-
-
 
             Vector3d face_joint_1, face_joint_2;
             bool found_1, found_2;
@@ -765,7 +764,9 @@ public:
         T(const_cast<Eigen::MatrixXi &>(_T)),
         FF0(_FF0),
         FF1(_FF1),
-        FF2(_FF1) {}
+        FF2(_FF1) {
+            igl::per_face_normals(V, T, N);
+        }
     
     MeshTrace(const Eigen::MatrixX<Scalar> &_V, const Eigen::MatrixXi &_T,
               const Eigen::MatrixX<Scalar> &_FF0, const Eigen::MatrixX<Scalar> &_FF1, const Eigen::MatrixX<Scalar> &_FF2,

@@ -2,12 +2,14 @@
 #include <iostream>
 #include "Eigen/Core"
 #include <vector>
+#include <ctime>
 #include "igl/AABB.h"
 #include "barycentric_to_cartesian.h"
 #include "KDTreeVectorOfVectorsAdaptor.h"
 #include "LBFGSpp/LBFGS.h"
 #include "MeshTrace/trace_manager.h"
 #include <cmath>
+#include <eigen_binaryIO.h>
 
 using namespace Eigen;
 using namespace std;
@@ -103,8 +105,6 @@ void LBFGS_optimization(double l,
             grad[i * 3 + 1] = -fia[1];
             grad[i * 3 + 2] = -fia[2];
         }
-//            cout << "E = " << EN << " gnorm: " << grad.norm() << " ";
-//            cout << x.transpose() << endl;
         return EN;
     };
 
@@ -112,17 +112,19 @@ void LBFGS_optimization(double l,
     meshtrace.to_cartesian(PV, P_in_Cartesian);
 
     VectorXd x = VectorXd::Zero(PV.size() * 3);
+
+    #pragma omp parallel for // NOLINT(openmp-use-default-none)
     for (int i = 0; i < P_in_Cartesian.rows(); i++) {
         x[i * 3 + 0] = P_in_Cartesian(i, 0);
         x[i * 3 + 1] = P_in_Cartesian(i, 1);
         x[i * 3 + 2] = P_in_Cartesian(i, 2);
     }
     double fx;
-    cout << "LBFGS Begin" << endl;
+    std::cout << "LBFGS Begin" << std::endl;
     int niter = solver.minimize(func, x, fx);
-    cout << "LBFGS Done" << endl;
-    cout << "f(x) = " << fx << endl;
-    cout << "x = " << x.transpose() << endl;
+    std::cout << "LBFGS Done" << std::endl;
+    std::cout << "f(x) = " << fx << std::endl;
+    // cout << "x = " << x.transpose() << endl;
     if (isnan(x[0])) {
         throw runtime_error("LBFGS Failed due to nan solution");
     }
@@ -130,8 +132,20 @@ void LBFGS_optimization(double l,
     for (auto [fx_h, gnorm_h] : solver.energy_history) {
         std::cout << fx_h << ", " << gnorm_h << std::endl;
     }
+    write_binary("p_orig.dat", P_in_Cartesian);
+    write_binary("x.dat", x);
 
     if (debug_test) (*debug_test).resize(PV.size(), 3);
+    for (int i = 0; i < PV.size(); i++) {
+        Vector3d displacement;
+        displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
+        displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
+        displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
+        meshtrace.tracing(PV[i], displacement);
+    }
+    if (debug_test) (*debug_test).resize(PV.size(), 3);
+
+    #pragma omp parallel for // NOLINT(openmp-use-default-none)
     for (int i = 0; i < PV.size(); i++) {
         Vector3d displacement;
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
@@ -149,10 +163,11 @@ void LBFGS_optimization(double l,
     }
 }
 
+
 void LBFGS_init(double l,
-                        vector<Particle<>> &PV,
-                        MeshTraceManager<double>& meshtrace,
-                        MatrixXd *debug_test = nullptr) {
+                vector<Particle<>> &PV,
+                MeshTraceManager<double>& meshtrace,
+                MatrixXd *debug_test = nullptr) {
     // LBFGS Routine
     LBFGSParam<double> param;
     param.epsilon = 1e-15;
@@ -237,8 +252,6 @@ void LBFGS_init(double l,
     cout << "LBFGS Begin" << endl;
     int niter = solver.minimize(func, x, fx);
     cout << "LBFGS Done" << endl;
-    cout << "f(x) = " << fx << endl;
-    cout << "x = " << x.transpose() << endl;
     if (isnan(x[0])) {
         throw runtime_error("LBFGS Failed due to nan solution");
     }
@@ -253,8 +266,6 @@ void LBFGS_init(double l,
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
         displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
         displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
-//        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
-//        cout << "d: " << displacement.transpose() << endl;
         meshtrace.tracing(PV[i], displacement);
 
         if (debug_test) {

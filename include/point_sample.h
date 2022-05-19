@@ -94,7 +94,7 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
             std::cout << tet << "th cell with bc: " << bc << std::endl;
         }
         P.push_back(p);
-        if (i % 1000 == 0) cout << "[" << i << "/" << n << "] inner points sampled." << endl; 
+        if (i % 10000 == 0) cout << "[" << i << "/" << n << "] inner points sampled." << endl; 
     }
     cout << "sampling done. " << P.size() << " particles sampled." << endl;
 }

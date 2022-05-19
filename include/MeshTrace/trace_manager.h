@@ -248,7 +248,7 @@ public:
         vector<ParticleD> candidates;
         MatrixXd candi_mat;
         for (int i = 0; i < new_particles.size(); i++) {
-            if (i % 1000 == 0) cout << "Particle Insert: Visiting " << i << "/" <<  new_particles.size() << " particles" << endl;
+            if (i % 5000 == 0) cout << "Particle Insert: Visiting " << i << "/" <<  new_particles.size() << " particles" << endl;
             if (new_particles[i].flag != FREE) continue;
             Vector3d ff[3];
             ff[0] = FF0T.row(new_particles[i].cell_id);
@@ -301,7 +301,7 @@ public:
             }
         }
 
-        cout << "deleted " << d_cnt << " particles." << "Inserted " << candidates.size() << " particles." << endl;
+        cout << "Deleted " << d_cnt << " particles." << "Inserted " << candidates.size() << " particles." << endl;
         cout << "-------------------------------" << endl;
 
         P = new_particles;
