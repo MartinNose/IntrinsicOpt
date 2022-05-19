@@ -1,5 +1,4 @@
-// Copyright (C) 2016-2020 Yixuan Qiu <yixuan.qiu@cos.name>
-// Copyright (C) 2016-2020 Dirk Toewe <DirkToewe@GoogleMail.com>
+// Copyright (C) 2016-2019 Yixuan Qiu <yixuan.qiu@cos.name> & Dirk Toewe <DirkToewe@GoogleMail.com>
 // Under MIT license
 
 #ifndef LINE_SEARCH_BRACKETING_H
@@ -12,7 +11,7 @@ namespace LBFGSpp {
 
 
 ///
-/// The bracketing line search algorithm for L-BFGS. Mainly for internal use.
+/// The bracketing line search algorithm for LBFGS. Mainly for internal use.
 ///
 template <typename Scalar>
 class LineSearchBracketing
@@ -57,7 +56,7 @@ public:
         if(dg_init > 0)
             std::logic_error("the moving direction increases the objective function value");
 
-        const Scalar test_decr = param.ftol * dg_init;
+        const Scalar dg_test = param.ftol * dg_init;
 
         // Upper and lower end of the current line search range
         Scalar step_lo = 0,
@@ -70,7 +69,7 @@ public:
             // Evaluate this candidate
             fx = f(x, grad);
 
-            if(fx > fx_init + step * test_decr)
+            if(fx > fx_init + step * dg_test)
             {
                 step_hi = step;
             } else {

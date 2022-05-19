@@ -1,30 +1,28 @@
-// Copyright (C) 2016-2020 Yixuan Qiu <yixuan.qiu@cos.name>
-// Copyright (C) 2016-2020 Dirk Toewe <DirkToewe@GoogleMail.com>
+// Copyright (C) 2016-2019 Yixuan Qiu <yixuan.qiu@cos.name>
 // Under MIT license
 
-#ifndef LINE_SEARCH_BRACKETING_H
-#define LINE_SEARCH_BRACKETING_H
+#ifndef LINE_SEARCH_BACKTRACKING_H
+#define LINE_SEARCH_BACKTRACKING_H
 
 #include <Eigen/Core>
 #include <stdexcept>  // std::runtime_error
+
 
 namespace LBFGSpp {
 
 
 ///
-/// The bracketing line search algorithm for L-BFGS. Mainly for internal use.
+/// The backtracking line search algorithm for LBFGS. Mainly for internal use.
 ///
 template <typename Scalar>
-class LineSearchBracketing
+class LineSearchBacktracking
 {
 private:
     typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> Vector;
 
 public:
     ///
-    /// Line search by bracketing. Similar to the backtracking line search
-    /// except that it actively maintains an upper and lower bound of the
-    /// current search range.
+    /// Line search by backtracking.
     ///
     /// \param f      A function object such that `f(x, grad)` returns the
     ///               objective function value at `x`, and overwrites `grad` with
@@ -45,6 +43,10 @@ public:
                            const Vector& drt, const Vector& xp,
                            const LBFGSParam<Scalar>& param)
     {
+        // Decreasing and increasing factors
+        const Scalar dec = 0.5;
+        const Scalar inc = 2.1;
+
         // Check the value of step
         if(step <= Scalar(0))
             std::invalid_argument("'step' must be positive");
@@ -57,22 +59,20 @@ public:
         if(dg_init > 0)
             std::logic_error("the moving direction increases the objective function value");
 
-        const Scalar test_decr = param.ftol * dg_init;
+        const Scalar dg_test = param.ftol * dg_init;
+        Scalar width;
 
-        // Upper and lower end of the current line search range
-        Scalar step_lo = 0,
-               step_hi = std::numeric_limits<Scalar>::infinity();
-
-        for( int iter = 0; iter < param.max_linesearch; iter++ )
+        int iter;
+        for(iter = 0; iter < param.max_linesearch; iter++)
         {
             // x_{k+1} = x_k + step * d_k
             x.noalias() = xp + step * drt;
             // Evaluate this candidate
             fx = f(x, grad);
 
-            if(fx > fx_init + step * test_decr)
+            if(fx > fx_init + step * dg_test)
             {
-                step_hi = step;
+                width = dec;
             } else {
                 // Armijo condition is met
                 if(param.linesearch == LBFGS_LINESEARCH_BACKTRACKING_ARMIJO)
@@ -81,7 +81,7 @@ public:
                 const Scalar dg = grad.dot(drt);
                 if(dg < param.wolfe * dg_init)
                 {
-                    step_lo = step;
+                    width = inc;
                 } else {
                     // Regular Wolfe condition is met
                     if(param.linesearch == LBFGS_LINESEARCH_BACKTRACKING_WOLFE)
@@ -89,15 +89,13 @@ public:
 
                     if(dg > -param.wolfe * dg_init)
                     {
-                        step_hi = step;
+                        width = dec;
                     } else {
                         // Strong Wolfe condition is met
                         break;
                     }
                 }
             }
-
-            assert( step_lo < step_hi );
 
             if(iter >= param.max_linesearch)
                 throw std::runtime_error("the line search routine reached the maximum number of iterations");
@@ -108,8 +106,7 @@ public:
             if(step > param.max_step)
                 throw std::runtime_error("the line search step became larger than the maximum value allowed");
 
-            // continue search in mid of current search range
-            step = std::isinf(step_hi) ? 2*step : step_lo/2 + step_hi/2;
+            step *= width;
         }
     }
 };
@@ -117,5 +114,4 @@ public:
 
 } // namespace LBFGSpp
 
-#endif // LINE_SEARCH_BRACKETING_H
-
+#endif // LINE_SEARCH_BACKTRACKING_H

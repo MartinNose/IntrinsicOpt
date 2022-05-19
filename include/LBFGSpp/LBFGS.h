@@ -1,9 +1,11 @@
-// Copyright (C) 2016-2022 Yixuan Qiu <yixuan.qiu@cos.name>
+// Copyright (C) 2016-2020 Yixuan Qiu <yixuan.qiu@cos.name>
 // Under MIT license
 
-#ifndef LBFGSPP_LBFGS_H
-#define LBFGSPP_LBFGS_H
+#ifndef LBFGS_H
+#define LBFGS_H
 
+#include <vector>
+#include <tuple>
 #include <Eigen/Core>
 #include "LBFGSpp/Param.h"
 #include "LBFGSpp/BFGSMat.h"
@@ -11,29 +13,29 @@
 #include "LBFGSpp/LineSearchBracketing.h"
 #include "LBFGSpp/LineSearchNocedalWright.h"
 
+
 namespace LBFGSpp {
+
 
 ///
 /// L-BFGS solver for unconstrained numerical optimization
 ///
-template <typename Scalar,
-          template <class> class LineSearch = LineSearchNocedalWright>
+template < typename Scalar,
+           template<class> class LineSearch = LineSearchBacktracking >
 class LBFGSSolver
 {
-public:
-std::vector<std::pair<Scalar, Scalar>> energy_history;
 private:
     typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> Vector;
     typedef Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Matrix;
     typedef Eigen::Map<Vector> MapVec;
 
     const LBFGSParam<Scalar>& m_param;  // Parameters to control the LBFGS algorithm
-    BFGSMat<Scalar> m_bfgs;             // Approximation to the Hessian matrix
-    Vector m_fx;                        // History of the objective function values
-    Vector m_xp;                        // Old x
-    Vector m_grad;                      // New gradient
-    Vector m_gradp;                     // Old gradient
-    Vector m_drt;                       // Moving direction
+    BFGSMat<Scalar>           m_bfgs;   // Approximation to the Hessian matrix
+    Vector                    m_fx;     // History of the objective function values
+    Vector                    m_xp;     // Old x
+    Vector                    m_grad;   // New gradient
+    Vector                    m_gradp;  // Old gradient
+    Vector                    m_drt;    // Moving direction
 
     // Reset internal variables
     // n: dimension of the vector to be optimized
@@ -45,11 +47,13 @@ private:
         m_grad.resize(n);
         m_gradp.resize(n);
         m_drt.resize(n);
-        if (m_param.past > 0)
+        if(m_param.past > 0)
             m_fx.resize(m_param.past);
     }
 
 public:
+std::vector<std::pair<Scalar, Scalar>> energy_history;
+
     ///
     /// Constructor for the L-BFGS solver.
     ///
@@ -90,11 +94,11 @@ public:
         // Evaluate function and compute gradient
         fx = f(x, m_grad);
         Scalar gnorm = m_grad.norm();
-        if (fpast > 0)
+        if(fpast > 0)
             m_fx[0] = fx;
 
         // Early exit if the initial x is already a minimizer
-        if (gnorm <= m_param.epsilon || gnorm <= m_param.epsilon_rel * x.norm())
+        if(gnorm <= m_param.epsilon || gnorm <= m_param.epsilon_rel * x.norm())
         {
             return 1;
         }
@@ -106,7 +110,7 @@ public:
 
         // Number of iterations used
         int k = 1;
-        for (;;)
+        for( ; ; )
         {
             // Save the curent x and gradient
             m_xp.noalias() = x;
@@ -117,25 +121,24 @@ public:
 
             // New gradient norm
             gnorm = m_grad.norm();
-
             energy_history.emplace_back(fx, gnorm);
 
             // Convergence test -- gradient
-            if (gnorm <= m_param.epsilon || gnorm <= m_param.epsilon_rel * x.norm())
+            if(gnorm <= m_param.epsilon || gnorm <= m_param.epsilon_rel * x.norm())
             {
                 return k;
             }
             // Convergence test -- objective function value
-            if (fpast > 0)
+            if(fpast > 0)
             {
                 const Scalar fxd = m_fx[k % fpast];
-                if (k >= fpast && abs(fxd - fx) <= m_param.delta * std::max(std::max(abs(fx), abs(fxd)), Scalar(1)))
+                if(k >= fpast && abs(fxd - fx) <= m_param.delta * std::max(std::max(abs(fx), abs(fxd)), Scalar(1)))
                     return k;
 
                 m_fx[k % fpast] = fx;
             }
             // Maximum number of iterations
-            if (m_param.max_iterations != 0 && k >= m_param.max_iterations)
+            if(m_param.max_iterations != 0 && k >= m_param.max_iterations)
             {
                 return k;
             }
@@ -157,6 +160,7 @@ public:
     }
 };
 
-}  // namespace LBFGSpp
 
-#endif  // LBFGSPP_LBFGS_H
+} // namespace LBFGSpp
+
+#endif // LBFGS_H
