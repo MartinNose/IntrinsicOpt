@@ -90,6 +90,7 @@ void callback(const ParticleD& target, double stepLen, double total) {
 }
 
 int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_file
+    
     bool debug_mode = false;
     // if (argc != 6 && argc != 5 && argc != 3) {
     //     cout << "Usage: \nIntrinsicOpt {input.tet.vtk} {frame.zyz} {lattice.txt} {output_path} [if_debug]" << endl;
@@ -104,38 +105,50 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     MatrixXd FF0F;
     MatrixXd FF1F;
 
-    read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh.vtk", V, T);
-    cout << "V: " << V.rows() << " T: " << T.rows() << endl;
-    read_zyz("/home/martinnose/HexDom/tmp/tmp/mesh.zyz", FF0T, FF1T, FF2T);
+    read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", V);
+    write_matrix_with_binary("/home/martinnose/HexDom/tmp/tmp/mesh_inner_points", V);
+    return 0;
+
+    // read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh.vtk", V, T);
+    // cout << "V: " << V.rows() << " T: " << T.rows() << endl;
+    // read_zyz("/home/martinnose/HexDom/tmp/tmp/mesh.zyz", FF0T, FF1T, FF2T);
     // cout << "read " << FF0T.rows() << "mat" << endl;
-    l = read_lattice("/home/martinnose/HexDom/tmp/tmp/mesh_length.txt");
+    // l = read_lattice("/home/martinnose/HexDom/tmp/tmp/mesh_length.txt");
     // l = 0.8 * igl::avg_edge_length(V, T);
     // cout << l << endl;
 
     cout << "lattice: " << l << endl;
 
-    // if (argc == 5 || argc == 6) {
-    //     debug_mode = false;
-    //     cout << "reading " << argv[1] << endl;
-    //     read_vtk(argv[1], V, T);
-    //     cout << "V: " << V.rows() << " T: " << T.rows() << endl;
-    //     cout << "reading " << argv[2] << endl;
-    //     read_zyz(argv[2], FF0T, FF1T, FF2T);
-    //     cout << "read " << FF0T.rows() << "mat" << endl;
-    //     cout << "reading " << argv[3] << endl;
-    //     l = read_lattice(argv[3]);
-    //     cout << "lattice: " << l << endl;
-    // } else {
-    //     debug_mode = true;
-    //     create_trivial_case(V, T, atoi(argv[1]), 0.1);
-    //     l = atof(argv[2]);
-    //     FF0T = MatrixXd::Zero(T.rows(), 3);
-    //     FF1T = MatrixXd::Zero(T.rows(), 3);
-    //     FF2T = MatrixXd::Zero(T.rows(), 3);
-    //     FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    //     FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    //     FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    // }
+    if (argc == 5 || argc == 6) {
+        debug_mode = false;
+        cout << "reading " << argv[1] << endl;
+        read_vtk(argv[1], V, T);
+        cout << "V: " << V.rows() << " T: " << T.rows() << endl;
+        cout << "reading " << argv[2] << endl;
+        read_zyz(argv[2], FF0T, FF1T, FF2T);
+        cout << "read " << FF0T.rows() << "mat" << endl;
+        cout << "reading " << argv[3] << endl;
+        l = read_lattice(argv[3]);
+        cout << "lattice: " << l << endl;
+    } else if (argc == 1) {
+        read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh.vtk", V, T);
+        cout << "V: " << V.rows() << " T: " << T.rows() << endl;
+        read_zyz("/home/martinnose/HexDom/tmp/tmp/mesh.zyz", FF0T, FF1T, FF2T);
+        cout << "read " << FF0T.rows() << "mat" << endl;
+        l = read_lattice("/home/martinnose/HexDom/tmp/tmp/mesh_length.txt");
+        l = 0.8 * igl::avg_edge_length(V, T);
+        cout << l << endl;
+    } else {
+        debug_mode = true;
+        create_trivial_case(V, T, atoi(argv[1]), 0.1);
+        l = atof(argv[2]);
+        FF0T = MatrixXd::Zero(T.rows(), 3);
+        FF1T = MatrixXd::Zero(T.rows(), 3);
+        FF2T = MatrixXd::Zero(T.rows(), 3);
+        FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
+        FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
+        FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    }
     // FF0T = MatrixXd::Zero(T.rows(), 3);
     // FF1T = MatrixXd::Zero(T.rows(), 3);
     // FF2T = MatrixXd::Zero(T.rows(), 3);
@@ -230,12 +243,9 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     // if (argc == 5 || argc == 6) 
     MatrixXd inner = debug_point[9].block(boundary_count, 0, debug_point[9].rows() - boundary_count, 3);
     write_vtk_points("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", inner);
-    write_binary("inner_points", inner);
+    // write_binary("inner_points", inner);
 
-
-    if (argc == 3) {
-        // write all to vtk
-    }
+    write_matrix_with_binary(argv[5], inner);
 
     return 0;
 }

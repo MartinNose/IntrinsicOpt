@@ -1,9 +1,20 @@
 #ifndef MESHTRACE_EIGEN_BINARYIO_H
 #define MESHTRACE_EIGEN_BINARYIO_H
-
+#include <string>
 #include <fstream>
 
 namespace Eigen{
+    template <typename M>
+        void write_matrix_with_binary(const std::string& filename, const M& mat)
+    {
+      std::ofstream out(filename, std::ios::binary);
+      size_t rows = mat.rows();
+      size_t cols = mat.cols();
+      out.write((char*) (&rows), sizeof(size_t));
+      out.write((char*) (&cols), sizeof(size_t));
+      out.write((char*) mat.data(), rows*cols*sizeof(double));
+    }
+
     template<class Matrix>
     void write_binary(const char* filename, const Matrix& matrix){
         std::ofstream out(filename, std::ios::out | std::ios::binary | std::ios::trunc);

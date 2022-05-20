@@ -6,6 +6,37 @@
 using namespace Eigen;
 using namespace std;
 
+void read_vtk(const std::string& path, MatrixXd &V) {
+    cout << "Reading input from " << path << endl;
+    std::ifstream input_s(path);
+
+    int V_num;
+    int T_num;
+    // Only for vtk tet file
+    for (string line; getline(input_s, line);) {
+        if (line.substr(0, 6) == "POINTS") {
+            istringstream ls(line);
+            string tmp;
+            ls >> tmp >> tmp;
+            V_num = stoi(tmp);
+            break;
+        }
+    } 
+
+    V.resize(V_num, 3);
+
+    for (int i = 0; i < V_num; i++) {
+        string line;
+        getline(input_s, line);
+        istringstream ls(line);
+        string tmp0, tmp1, tmp2;
+        ls >> tmp0 >> tmp1 >> tmp2;
+        
+        V.row(i) << stof(tmp0), stof(tmp1), stof(tmp2);
+        
+    }
+}
+
 void read_vtk(const std::string& path, MatrixXd &V, MatrixXi &T) {
     cout << "Reading input from " << path << endl;
     std::ifstream input_s(path);

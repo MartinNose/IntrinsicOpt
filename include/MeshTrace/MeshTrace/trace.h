@@ -597,7 +597,7 @@ public:
                     get_direction(new_cell, direction, new_direct);
                     Vector3d face_n = (v[pos_eb_idx[0]] - joint).cross(v[pos_eb_idx[1]] - joint).normalized();
 
-                    if (direct.dot(face_n) * new_direct.dot(face_n) > 0) {
+                    if (direct.dot(face_n) * new_direct.dot(face_n) < 0) {
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                         return true;
                     }
