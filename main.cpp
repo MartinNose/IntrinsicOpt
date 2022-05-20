@@ -1,6 +1,7 @@
 #include <iostream>
 #include "Eigen/Core"
 #include <igl/barycenter.h>
+#include <igl/avg_edge_length.h>
 #include "read_vtk.h"
 #include "read_lattice.h"
 #include <igl/PI.h>
@@ -106,8 +107,11 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh.vtk", V, T);
     cout << "V: " << V.rows() << " T: " << T.rows() << endl;
     read_zyz("/home/martinnose/HexDom/tmp/tmp/mesh.zyz", FF0T, FF1T, FF2T);
-    cout << "read " << FF0T.rows() << "mat" << endl;
+    // cout << "read " << FF0T.rows() << "mat" << endl;
     l = read_lattice("/home/martinnose/HexDom/tmp/tmp/mesh_length.txt");
+    // l = 0.8 * igl::avg_edge_length(V, T);
+    // cout << l << endl;
+
     cout << "lattice: " << l << endl;
 
     // if (argc == 5 || argc == 6) {
@@ -132,11 +136,21 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     //     FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
     //     FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
     // }
+    // FF0T = MatrixXd::Zero(T.rows(), 3);
+    // FF1T = MatrixXd::Zero(T.rows(), 3);
+    // FF2T = MatrixXd::Zero(T.rows(), 3);
+    // FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    // FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
+    // FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
 
-    write_vtk_points("xxx.vtk", V);
     if (argc == 5 || argc == 6) write_vtk_points(argv[4], debug_point[9]);
 
     auto[out_face_map, sharp_edge_map, surface_point] = get_surface_mesh(V, T, TF);
+
+    boundary_count =0;
+    for (int i = 0; i < surface_point.size(); i++) {
+        if (surface_point[i]) boundary_count++;
+    }
 
     igl::barycenter(V, TF, B);
     igl::per_face_normals(V, TF, N);
@@ -190,7 +204,7 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
 
     if (debug_mode) meshtrace.to_cartesian(PV, debug_point[2]);
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 5; i++) {
         cout << "iteration: " << i + 1 << endl;
         if (meshtrace.particle_insert_and_delete(PV, 1.5 * l, l)) {
             break;
@@ -214,8 +228,9 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     meshtrace.to_cartesian(PV, debug_point[9]);
 
     // if (argc == 5 || argc == 6) 
-    write_vtk_points("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", debug_point[9]);
-    write_binary("inner_points", debug_point[9]);
+    MatrixXd inner = debug_point[9].block(boundary_count, 0, debug_point[9].rows() - boundary_count, 3);
+    write_vtk_points("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", inner);
+    write_binary("inner_points", inner);
 
 
     if (argc == 3) {

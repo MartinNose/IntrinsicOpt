@@ -48,12 +48,12 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
         Vector3d v2 = V.row(cur[2]);
         Vector3d v3 = V.row(cur[3]);
 
-        volume[i] = igl::volume_single(v0, v1, v2, v3);
+        volume[i] = abs(igl::volume_single(v0, v1, v2, v3));
         total_volume += volume[i];
     }
     // Total number of points
     cout << "lattice: " << l << endl;
-    int total = ceil(total_volume / pow(l, 3) * 8);
+    int total = ceil(total_volume / pow(l, 3) * 2);
     int n = max(total - (int)P.size(), 1); // to add
     cout << "Boundary points: " << P.size() << endl;
     cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;
@@ -136,7 +136,7 @@ void point_sample(const MatrixXd &V, const MatrixXi &T,
         Vector3d v2 = V.row(cur[2]);
         Vector3d v3 = V.row(cur[3]);
 
-        volume[i] = igl::volume_single(v0, v1, v2, v3);
+        volume[i] = abs(igl::volume_single(v0, v1, v2, v3));
         total_volume += volume[i];
     }
     // Total number of points

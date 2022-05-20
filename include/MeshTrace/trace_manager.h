@@ -315,6 +315,7 @@ public:
                     igl::barycentric_coordinates(c.transpose(), 
                         V.row(TT.row(tet)[0]), V.row(TT.row(tet)[1]), V.row(TT.row(tet)[2]), V.row(TT.row(tet)[3]), 
                         bc);
+                    if (bc.minCoeff() < -BARYCENTRIC_BOUND) continue;
                     ParticleD inserted(tet, bc, FREE);
                     
                     if (on_surface(inserted, 0.5 * local_lattice)) continue;

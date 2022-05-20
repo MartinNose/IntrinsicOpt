@@ -255,6 +255,20 @@ private:
         return -1;
     }
 
+    void get_direction(int tet, const Matrix<Scalar, 2, 1> &direction, Vector3d &direct) {
+        Vec3 ff0 = FF0.row(tet).transpose();
+        Vec3 ff1 = FF1.row(tet).transpose();
+        Vec3 ff2 = FF2.row(tet).transpose();
+
+        Matrix3<Scalar> A = AngleAxis<Scalar>(direction[0], ff2.normalized()).toRotationMatrix();
+
+        direct = (A * ff0).normalized();
+        
+        A = AngleAxis<Scalar>(direction[1], direct.cross(ff2).normalized()).toRotationMatrix();
+
+        direct = (A * direct).normalized();
+    }
+
 
 public:
     std::map<vector<int>, std::pair<int, int>> face_adjacent_map; // vi vj vk -> tet1 tet2
@@ -429,11 +443,10 @@ public:
         Eigen::Matrix<Scalar, 1, DIM> BC;
         BC << start.bc;
 
-
         // Computing the local coordinate of the displacement
-        Vec3 ff0 = ff.row(0);
-        Vec3 ff1 = ff.row(1);
-        Vec3 ff2 = ff.row(2);
+        Vec3 ff0 = ff.col(0);
+        Vec3 ff1 = ff.col(1);
+        Vec3 ff2 = ff.col(2);
 
         Matrix3<Scalar> A = AngleAxis<Scalar>(direction(0, 0), ff2.normalized()).toRotationMatrix();
 
@@ -526,7 +539,7 @@ public:
             RowVector4<Scalar> bc_joint_tet;
             if (found_1 && found_2) {
                 double u, t;
-                if (igl::segment_segment_intersect(startPoint, end_point - startPoint, edge[0], edge[1] - edge[0], u, t, BARYCENTRIC_BOUND * BARYCENTRIC_BOUND)) { // joint is on the edge
+                if (igl::segment_segment_intersect(startPoint, end_point - startPoint, edge[0], edge[1] - edge[0], u, t, BARYCENTRIC_BOUND)) { // joint is on the edge
                     Vector3d joint = edge[0] + t * (edge[1] - edge[0]);
 
                     new_cell = compute_new_p(start.cell_id,
@@ -552,7 +565,6 @@ public:
                         start.cell_id = new_cell;
                         start.bc.row(0) << new_bc;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                        if ((joint - startPoint).norm() < 1e-6) return true;
                         return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                    }
                 }
@@ -580,10 +592,19 @@ public:
                     return true;
                 }
                 if (bc_joint_tet.minCoeff() > -BARYCENTRIC_BOUND) {
+                    
+                    Vector3d new_direct;
+                    get_direction(new_cell, direction, new_direct);
+                    Vector3d face_n = (v[pos_eb_idx[0]] - joint).cross(v[pos_eb_idx[1]] - joint).normalized();
+
+                    if (direct.dot(face_n) * new_direct.dot(face_n) > 0) {
+                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                        return true;
+                    }
+                    
                     start.cell_id = new_cell;
                     start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                    if ((joint - startPoint).norm() < 1e-6) return true;
                     return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                 }
             }
@@ -645,7 +666,6 @@ public:
                         start.cell_id = candidates[i];
                         start.bc << temp_bc;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                        if ((joint - startPoint).norm() < 1e-6) return true;
                         return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                     }
                 }
@@ -739,7 +759,6 @@ public:
                     start.cell_id = new_cell;
                     start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                    if ((joint - startPoint).norm() < 1e-6) return true;
                     return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
                 }
             }

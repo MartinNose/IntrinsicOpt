@@ -147,7 +147,7 @@ void LBFGS_optimization(double l,
     }
     if (debug_test) (*debug_test).resize(PV.size(), 3);
 
-    #pragma omp parallel for // NOLINT(openmp-use-default-none)
+    // #pragma omp parallel for // NOLINT(openmp-use-default-none)
     for (int i = 0; i < PV.size(); i++) {
         Vector3d displacement;
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
@@ -155,7 +155,40 @@ void LBFGS_optimization(double l,
         displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
 //        cout << "start tracing. cell id: " << PV[i].cell_id << " bc: " <<PV[i].bc << " coord: " << P_in_Cartesian.row(i) << endl;
 //        cout << "d: " << displacement.transpose() << endl;
-        meshtrace.tracing(PV[i], displacement);
+        // MESHTRACE::FLAG flag = PV[i].flag;
+
+        Vector3d target {x[i*3+0], x[i*3+1], x[i*3+2]};
+
+        if (PV[i].flag == FREE) {
+            int tet = meshtrace.in_element(target);
+            if (tet != -1) {
+                RowVector4d bc;
+                igl::barycentric_coordinates(target.transpose(), 
+                    meshtrace.V.row(meshtrace.TT.row(tet)[0]), meshtrace.V.row(meshtrace.TT.row(tet)[1]), 
+                    meshtrace.V.row(meshtrace.TT.row(tet)[2]), meshtrace.V.row(meshtrace.TT.row(tet)[3]), 
+                bc);
+                if (bc.minCoeff() > -BARYCENTRIC_BOUND) {
+                    ParticleD inserted(tet, bc, FREE);
+                    PV[i] = inserted;
+                } else {
+                    meshtrace.tracing(PV[i], displacement);
+                }
+            } else {
+                meshtrace.tracing(PV[i], displacement);
+            }
+        } else {
+            meshtrace.tracing(PV[i], displacement);
+        }
+
+        // if (flag == MESHTRACE::FREE && PV[i].flag == MESHTRACE::FREE) {
+        //     Vector3d target {x[i*3+0], x[i*3+1], x[i*3+2]};
+        //     int tet = meshtrace.in_element(target);
+        //     if (tet != PV[i].cell_id) {
+        //         cout << "expected: " << tet << " " << target.transpose() << endl;
+        //         meshtrace.to_cartesian(PV[i], target);
+        //         cout << "actually: " << PV[i].cell_id << " " << target.transpose() <<  endl;
+        //     }
+        // }
 
         if (debug_test) {
             (*debug_test).row(i)[0] = x[i * 3 + 0];
