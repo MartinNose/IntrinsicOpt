@@ -1,7 +1,6 @@
 .vscode
 build
 dataset
-cmake
 .DS_Store
 
 .idea
