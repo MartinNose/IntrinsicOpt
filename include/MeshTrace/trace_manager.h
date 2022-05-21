@@ -83,13 +83,14 @@ public:
     const Eigen::MatrixX<Scalar> FF2T;
     const Eigen::MatrixX<Scalar> FF0F;
     const Eigen::MatrixX<Scalar> FF1F;
-
+    
+    MatrixXd frame_field;
     std::map<vector<int>, vector<int>> adjacent_map;
 
     std::map<vector<int>, pair<int, int>> out_face_map; // map[triangle] = [id_in_TF, id_in_TT}
     std::vector<bool> surface_point; // TODO change to set for performance improvement
     std::map<vector<int>, tuple<int, int, bool>> edge_tri_map; // map[{vi,vj} = {face_i, face_j, if_sharp}
-    std::vector<std::vector<int>> surface_point_adj_faces;
+    std::map<int, std::vector<int>> surface_point_adj_faces;
     std::map<int, std::set<int>> surface_point_adj_sharp_edges;
     int anchor_cnt;
 
@@ -104,7 +105,7 @@ public:
         const Eigen::MatrixX<Scalar> &_FF1F,
         std::map<vector<int>, pair<int, int>> &_out_face_map,
         std::vector<bool> & _surface_point, double sharp_threshold = 0.64278760968 // cos(50deg)
-    ) : tet_trace(_V, _TT, _FF0T, _FF1T, _FF2T, _surface_point), tri_trace(_V, _TF, _FF0F, _FF1F),
+    ) : tet_trace(_V, _TT, _FF0T, _FF1T, _FF2T, _surface_point),
         V(_V), TT(_TT), TF(_TF), FF0T(_FF0T), FF1T(_FF1T), FF2T(_FF2T),
         FF0F(_FF0F), FF1F(_FF1F), out_face_map(_out_face_map), surface_point(_surface_point) {
         igl::per_face_normals(V, TF, tri_normal);
@@ -113,7 +114,7 @@ public:
         for(auto && i : surface_point) {
             if (i) anchor_cnt++; // TODO consider remove
         }
-        surface_point_adj_faces = vector<vector<int>> (TF.rows());
+        
         for (int i = 0; i < TF.rows(); i++) {
             Vector3i tri = TF.row(i);
             for (auto & j : edge_of_triangle) {
@@ -140,10 +141,13 @@ public:
                     }
                 }
             }
-
-            surface_point_adj_faces[tri[0]].push_back(i);
-            surface_point_adj_faces[tri[1]].push_back(i);
-            surface_point_adj_faces[tri[2]].push_back(i);
+            for (int k = 0; k < 3; k++) {
+                if (surface_point_adj_faces.find(tri[k]) != surface_point_adj_faces.end()) {
+                    surface_point_adj_faces[tri[k]].push_back(i); 
+                } else {
+                    surface_point_adj_faces[tri[k]] = {i};
+                }
+            }
         }
         cout << "building vertex_adj_faces done" << endl;
         cout << "building vertex_adj_sharp_edges done" << endl;
@@ -151,10 +155,13 @@ public:
 
         tree.init(V, TT);
 
-        // for (int i = 0; i < surface_point_adj_faces.size(); i++) {
-        //     // TODO if fixed
-        //     //
-        // }
+        frame_field.resize(3, TT.rows() * 3);
+        for (int i = 0; i < TT.rows(); i++) {
+            frame_field.col(i * 3 + 0) = FF0T.row(i).transpose();
+            frame_field.col(i * 3 + 1) = FF1T.row(i).transpose();
+            frame_field.col(i * 3 + 2) = FF2T.row(i).transpose();
+        }
+        tri_trace = MeshTrace<double, 3>(_V, _TF, _FF0F, _FF1F, surface_point_adj_faces);
     }
 
     int in_element(Vector3d p) {
@@ -438,6 +445,7 @@ public:
                     distance  -= distance;
                 } else {
                     assert(surface_point_adj_sharp_edges.find(e_j) != surface_point_adj_sharp_edges.end());
+                    assert(surface_point_adj_sharp_edges[e_j].size() != 0);
                     int e_next;
                     if (surface_point_adj_sharp_edges[e_j].size() == 2) {
                         for (int iter : surface_point_adj_sharp_edges[e_j]) {
@@ -709,14 +717,11 @@ public:
     void get_mid_frame(const Vector3d &vi, const Vector3d &vj, Matrix3d &ff) {
         int tet = in_element((vi + vj) * 0.5);
         if (tet != -1) {
-            ff.col(0) = FF0T.row(tet).transpose();
-            ff.col(1) = FF1T.row(tet).transpose();
-            ff.col(2) = FF2T.row(tet).transpose();
+            ff = frame_field.block(0, tet * 3, 3, 3);
             return;
         } else {
             ff = MatrixXd::Identity(3, 3);
         }
     }
-
 };
 } // namespace MESHTRACE

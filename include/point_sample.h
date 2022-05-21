@@ -13,28 +13,53 @@
 
 using namespace std;
 using namespace Eigen;
+using namespace MESHTRACE;
 
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc);
 
 template<typename Particles>
-void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l, const map<vector<int>, pair<int, int>> &out_face_map, MESHTRACE::MeshTraceManager<double> &meshtrace) {
+void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l, map<vector<int>, pair<int, int>> &out_face_map, MESHTRACE::MeshTraceManager<double> &meshtrace) {
     cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
     cout << "T rows: " << T.rows() << " cols: " << T.cols() << endl;
 
     vector<int> num_in_tet(T.rows(), 0);
-    map<int, bool> surface;
-    for (auto const &[key, val]: out_face_map) {
-        for (int j = 0; j < 3; j++) {
-            int vi = key[j];
-            if (surface.find(vi) != surface.end()) continue;
-            surface[vi] = true;
-            RowVector3d bc = V.row(vi);
-            MESHTRACE::Particle<double> temp(vi, bc, MESHTRACE::POINT);
-            P.push_back(temp);
-
-            num_in_tet[val.second]++;
+    for (int i = 0; i < meshtrace.surface_point.size(); i++) {
+        if (!meshtrace.surface_point[i]) continue;
+        if (meshtrace.surface_point_adj_sharp_edges.find(i) 
+            == meshtrace.eshtrace.surface_point_adj_sharp_edges.end())
+                continue;
+        if (meshtrace.surface_point_adj_sharp_edges[i].size() == 0) { // face
+            int face_i = meshtrace.surface_point_adj_faces[i][0];
+            RowVector3d bc;
+            for (int j = 0; j < 3; j++) {
+                bc[j] = (i == TF.row(face_i)[j]) ? 1. : 0.;
+            }
+            ParticleD p(face_i, bc, FACE);
+            P.push_back(p);
+        } else if (meshtrace.surface_point_adj_sharp_edges[i].size() == 2) { // edge
+            int ej = *(meshtrace.surface_point_adj_sharp_edges[i].begin());
+            ParticleD p;
+            p.cell_id = i;
+            p.bc.resize(1, 4);
+            p.bc[0] = 1;
+            p.bc[1] = 0;
+            p.bc[2] = (double)i;
+            p.bc[3] = (double)ej;
+            p.flag = EDGE;
+            P.push_back(p);
+        } else { // p
+            ParticleD p;
+            p.cell_id = i;
+            p.bc = V.row(i);
+            p.flag = POINT;
+            P.push_back(p);
         }
+        vector<int> key = {TF.row(i)[0], TF.row(i)[1], TF.row(i)[2]};
+        sort(key.begin(), key.end());
+        int tet_i = out_face_map[key].second;
+        num_in_tet[tet_i]++;
     }
+
 
     double total_volume = 0;
     std::vector<double> volume(T.rows());

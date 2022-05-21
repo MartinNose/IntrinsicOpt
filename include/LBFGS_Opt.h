@@ -137,17 +137,16 @@ void LBFGS_optimization(double l,
     write_binary("p_orig.dat", P_in_Cartesian);
     write_binary("x.dat", x);
 
-    if (debug_test) (*debug_test).resize(PV.size(), 3);
-    for (int i = 0; i < PV.size(); i++) {
-        Vector3d displacement;
-        displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
-        displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
-        displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
-        meshtrace.tracing(PV[i], displacement);
-    }
-    if (debug_test) (*debug_test).resize(PV.size(), 3);
+    // if (debug_test) (*debug_test).resize(PV.size(), 3);
+    // for (int i = 0; i < PV.size(); i++) {
+    //     Vector3d displacement;
+    //     displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
+    //     displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
+    //     displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
+    //     meshtrace.tracing(PV[i], displacement);
+    // }
 
-    // #pragma omp parallel for // NOLINT(openmp-use-default-none)
+    #pragma omp parallel for // NOLINT(openmp-use-default-none)
     for (int i = 0; i < PV.size(); i++) {
         Vector3d displacement;
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
@@ -188,13 +187,6 @@ void LBFGS_optimization(double l,
         //         meshtrace.to_cartesian(PV[i], target);
         //         cout << "actually: " << PV[i].cell_id << " " << target.transpose() <<  endl;
         //     }
-        // }
-
-        if (debug_test) {
-            (*debug_test).row(i)[0] = x[i * 3 + 0];
-            (*debug_test).row(i)[1] = x[i * 3 + 1];
-            (*debug_test).row(i)[2] = x[i * 3 + 2];
-        }
     }
 }
 

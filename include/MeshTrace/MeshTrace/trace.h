@@ -106,19 +106,24 @@ private:
     const Eigen::MatrixX<Scalar> &FF1;
     const Eigen::MatrixX<Scalar> &FF2;
     Eigen::MatrixX<Scalar> N;
+    std::map<int, std::vector<int>> vertex_adj_faces;
+    std::map<int, std::set<int>> vertex_adj_sharp_edges;
+    std::map<vector<int>, tuple<int, int, bool>> edge_tri_map; // map[{vi,vj} = {face_i, face_j, if_sharp}
 
-    bool findAdjacentCell(int cell_id, const int *edge, int *new_cell) {
-        for (int i = 0; i < T.rows(); i++) {
-            int hit_count = 0;
-            for (int j = 0; j < 3; j++) {
-                if (T(i, j) == edge[0] || T(i, j) == edge[1]) hit_count++;
+    vector<int> findAdjacentFace(int face_id, vector<int> index) {
+        if (index.size() == 2) {            
+            if (index[0] > index[1]) int tmp = index[0]; index[1] = tmp;
+            assert(edge_tri_map.find(index) != edge_tri_map.end());
+            auto t = edge_tri_map[index];
+            if (get<2>(t)) {
+                return vector<int>{-1};
+            } else {
+                return vector<int>{get<0>(t) == face_id ? get<1>(t) : get<2>(t)};
             }
-            if (hit_count == 2 && i != cell_id) {
-                *new_cell = i;
-                return true;
-            }
+        } else if (index.size() == 1) {
+            assert(vertex_adj_faces.find(index[0]) != vertex_adj_faces.end());
+            return vertex_adj_faces[index[0]];
         }
-        return false;
     }
 
     vector<int> findAdjacentCell(int cell_id, vector<int> index) {
@@ -309,8 +314,6 @@ public:
 
         Vec3 normal = alpha.cross(beta).normalized();
 
-        Vec3 initGlobal = FF0.row(start.cell_id);
-
         Matrix<Scalar, 3, 3> A = AngleAxis<Scalar>(direction, normal).toRotationMatrix();
 
         Vec3 direct = (A * alpha).normalized();
@@ -320,22 +323,58 @@ public:
         Vec3 startPoint = Cell * BC.transpose();
         Vec3 endPoint = startPoint + displacement;
 
-        Vec3 endPointB = Cell.inverse() * endPoint;
+        RowVector3d endPointB;
+        igl::barycentric_coordinates(endPoint.transpose(), V.row(cell_i[0]), V.row(cell_i[1]), V.row(cell_i[2]), endPointB);
 
         // Get the coefficient of the local coordinate of the target point
-        Scalar b0(endPointB(0, 0));
-        Scalar b1(endPointB(1, 0));
-        Scalar b2(endPointB(2, 0));
+        Scalar b0(endPointB(0));
+        Scalar b1(endPointB(1));
+        Scalar b2(endPointB(2));
 
         Matrix<double, Dynamic, 3> temp(1,3);
 
-        if (b0 >= 0 && b1 >= 0 && b0 + b1 <= 1) { // the target point is inside the triangle
-            start.bc << endPointB.transpose();
+        if (b0 >= 0 && b1 >= 0 && b2 >= 0) { // the target point is inside the triangle
+            start.bc << endPointB;
             callback(start, distance, total + distance);
             return true;
         } else {
-            int edges[3][3]{ {0, 1, 2}, {1, 2, 0}, {2, 0, 1} };
+            int edges[3][2]{ {1, 2}, {2, 0}, {0, 1} };
 
+            vector<int> neg_idx;
+            vector<int> pos_idx;
+            for (int i = 0; i < 3; i++) {
+                if(endPointB(i) < -BARYCENTRIC_BOUND) neg_idx.push_back(i);
+                else pos_idx.push_back(i);
+            }
+
+            if (neg_idx.size() == 1) { // joint is at the edge
+                vector<int> edge = {cell_i[pos_idx[0]], cell_i[pos_idx[1]]};
+                vector<int> res = findAdjacentFace(start.cell_id, edge);
+                if (res[0] == -1) { // SHARP EDGE
+
+                } else {
+                    Vector3d v0 = V.row(cell_i[pos_idx[0]]);
+                    Vector3d v1 = V.row(cell_i[pos_idx[1]]);
+                    igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, EPSILON)
+                    start.cell_id = res[0];
+                    Vector3i new_tri = T.row(res[0]);
+                    RowVector3d newbc;
+                    for (int i = 0; i < 3; i++) {
+                        if (new_tri[i] == cell_i[pos_idx[0]]) bc[i] = 1 - t;
+                        else if (new_tri[i] == cell_i[pos_idx[1]]) bc[i] = t; 
+                        else bc[i] = 0;
+                    }
+                    start.bc = newbc;
+                    return true;
+                }
+            } else if (neg_idx.size() == 2) {
+                Vector3d v = V.row(pos_idx[0]);
+                if (((endPoint - startPoint).normalized()).cross((v - startPoint).normalized()).norm() < BARYCENTRIC_BOUND) {
+                    vector<int> candi = findAdjacentFace(start.cell_id, vector<int>{cell_i[pos_idx[0]]});
+
+                }
+            }
+//
             for (auto & i : edges) {
                 if (start.bc(i[2]) == 0) continue;
 
@@ -416,8 +455,6 @@ public:
                     return traceStep(distance - traveledDistance, start, direction, total + traveledDistance, new_ff, callback);
                 }
             }
-            std::cerr << "Error Case" << std::endl;
-            return false;
         }
     }
 
@@ -772,17 +809,17 @@ public:
     }
 
     MeshTrace(const Eigen::MatrixX<Scalar> &_V,
-              const Eigen::MatrixXi &_T,
-              const Eigen::MatrixX<Scalar> &_FF0,
-              const Eigen::MatrixX<Scalar> &_FF1
-              ): // tri_mesh version
-        V(_V),
-        T(const_cast<Eigen::MatrixXi &>(_T)),
-        FF0(_FF0),
-        FF1(_FF1),
-        FF2(_FF1) {
+        const Eigen::MatrixXi &_T,
+        const Eigen::MatrixX<Scalar> &_FF0,
+        const Eigen::MatrixX<Scalar> &_FF1,
+        std::map<int, std::vector<int>> _vertex_adj_faces;
+        std::map<int, std::set<int>> _vertex_adj_sharp_edges;
+        std::map<vector<int>, tuple<int, int, bool>> _edge_tri_map;
+        ): V(_V), T(const_cast<Eigen::MatrixXi &>(_T)), 
+        FF0(_FF0), FF1(_FF1),
+        vertex_adj_faces(_surface_point), edge_tri_map(_edge_tri_map) {
             igl::per_face_normals(V, T, N);
-        }
+    }
     
     MeshTrace(const Eigen::MatrixX<Scalar> &_V, const Eigen::MatrixXi &_T,
               const Eigen::MatrixX<Scalar> &_FF0, const Eigen::MatrixX<Scalar> &_FF1, const Eigen::MatrixX<Scalar> &_FF2,

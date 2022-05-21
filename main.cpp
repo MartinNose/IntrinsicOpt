@@ -13,6 +13,7 @@
 #include "trivial_case.h"
 #include "read_zyz.h"
 #include <cstdlib>
+#include <ctime>
 
 using namespace std;
 using namespace Eigen;
@@ -24,21 +25,8 @@ Eigen::MatrixXd trace_points;
 Eigen::MatrixXd debug_point_a;
 Eigen::MatrixXd debug_point_b;
 
-Eigen::MatrixXd random_points;
-Eigen::MatrixXd delete_insert_points;
-Eigen::MatrixXd optimized_points;
+vector<Eigen::MatrixXd> debug_points;
 
-Eigen::MatrixXd debug_point[10];
-
-Eigen::MatrixXd diFix;
-Eigen::MatrixXd diFace;
-Eigen::MatrixXd diFree;
-Eigen::MatrixXd ranFix;
-Eigen::MatrixXd ranFace;
-Eigen::MatrixXd ranFree;
-Eigen::MatrixXd optFix;
-Eigen::MatrixXd optFace;
-Eigen::MatrixXd optFree;
 
 int boundary_count;
 
@@ -89,8 +77,13 @@ void callback(const ParticleD& target, double stepLen, double total) {
         stepCallback(target, stepLen, total);
 }
 
+double time_insert_delete, time_lbfgs;
+
 int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_file
-    
+    time_insert_delete = 0;
+    time_lbfgs = 0;
+    double cur_time;
+
     bool debug_mode = false;
     // if (argc != 6 && argc != 5 && argc != 3) {
     //     cout << "Usage: \nIntrinsicOpt {input.tet.vtk} {frame.zyz} {lattice.txt} {output_path} [if_debug]" << endl;
@@ -105,21 +98,7 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     MatrixXd FF0F;
     MatrixXd FF1F;
 
-    read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", V);
-    write_matrix_with_binary("/home/martinnose/HexDom/tmp/tmp/mesh_inner_points", V);
-    return 0;
-
-    // read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh.vtk", V, T);
-    // cout << "V: " << V.rows() << " T: " << T.rows() << endl;
-    // read_zyz("/home/martinnose/HexDom/tmp/tmp/mesh.zyz", FF0T, FF1T, FF2T);
-    // cout << "read " << FF0T.rows() << "mat" << endl;
-    // l = read_lattice("/home/martinnose/HexDom/tmp/tmp/mesh_length.txt");
-    // l = 0.8 * igl::avg_edge_length(V, T);
-    // cout << l << endl;
-
-    cout << "lattice: " << l << endl;
-
-    if (argc == 5 || argc == 6) {
+    if (argc == 6) {
         debug_mode = false;
         cout << "reading " << argv[1] << endl;
         read_vtk(argv[1], V, T);
@@ -131,17 +110,9 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         l = read_lattice(argv[3]);
         cout << "lattice: " << l << endl;
     } else if (argc == 1) {
-        read_vtk("/home/martinnose/HexDom/tmp/tmp/mesh.vtk", V, T);
-        cout << "V: " << V.rows() << " T: " << T.rows() << endl;
-        read_zyz("/home/martinnose/HexDom/tmp/tmp/mesh.zyz", FF0T, FF1T, FF2T);
-        cout << "read " << FF0T.rows() << "mat" << endl;
-        l = read_lattice("/home/martinnose/HexDom/tmp/tmp/mesh_length.txt");
-        l = 0.8 * igl::avg_edge_length(V, T);
-        cout << l << endl;
-    } else {
         debug_mode = true;
-        create_trivial_case(V, T, atoi(argv[1]), 0.1);
-        l = atof(argv[2]);
+        create_trivial_case(V, T, 5, 0.1);
+        l = 0.1;
         FF0T = MatrixXd::Zero(T.rows(), 3);
         FF1T = MatrixXd::Zero(T.rows(), 3);
         FF2T = MatrixXd::Zero(T.rows(), 3);
@@ -149,29 +120,14 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
         FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
     }
-    // FF0T = MatrixXd::Zero(T.rows(), 3);
-    // FF1T = MatrixXd::Zero(T.rows(), 3);
-    // FF2T = MatrixXd::Zero(T.rows(), 3);
-    // FF0T.col(0) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    // FF1T.col(1) = MatrixXd::Constant(T.rows(), 1, 1.0);
-    // FF2T.col(2) = MatrixXd::Constant(T.rows(), 1, 1.0);
-
-    if (argc == 5 || argc == 6) write_vtk_points(argv[4], debug_point[9]);
 
     auto[out_face_map, sharp_edge_map, surface_point] = get_surface_mesh(V, T, TF);
 
-    boundary_count =0;
-    for (int i = 0; i < surface_point.size(); i++) {
-        if (surface_point[i]) boundary_count++;
-    }
+    FF0F.resize(TF.rows(), 3);
+    FF1F.resize(TF.rows(), 3);
 
     igl::barycenter(V, TF, B);
     igl::per_face_normals(V, TF, N);
-
-    assert(FF0T.rows() == T.rows() && FF1T.rows() == T.rows() && FF2T.rows() == T.rows());
-
-    FF0F.resize(TF.rows(), 3);
-    FF1F.resize(TF.rows(), 3);
 
     for (auto const &[key, val]: out_face_map) {
         int tri = val.first;
@@ -201,51 +157,92 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         FF0F.row(tri) = ff[0];
         FF1F.row(tri) = ff[1];
     }
-    
+
+    boundary_count = 0;
+    for (int i = 0; i < surface_point.size(); i++) {
+        if (surface_point[i]) boundary_count++;
+    }
+
+    assert(FF0T.rows() == T.rows() && FF1T.rows() == T.rows() && FF2T.rows() == T.rows());
+
     MeshTraceManager<double> meshtrace(V, T, TF, FF0T, FF1T, FF2T, FF0F, FF1F, out_face_map, surface_point);
 
     vector<ParticleD> PV;
 
     point_sample_init(V, T, TF, PV, l, out_face_map, meshtrace);
-    if (debug_mode) meshtrace.to_cartesian(PV, debug_point[0]);
+    MatrixXd temp;
+    meshtrace.to_cartesian(PV, temp);
+    debug_points.push_back(temp);
 
     int debug_cnt = 0;
+    cur_time = std::clock();
     meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
-    if (debug_mode) meshtrace.to_cartesian(PV, debug_point[1]);
+    time_insert_delete += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
+    meshtrace.to_cartesian(PV, temp);
+    debug_points.push_back(temp);
 
-    LBFGS_init(l, PV, meshtrace, debug_mode ? &(debug_point[(debug_cnt++) % 9 + 1]) : nullptr);
+    LBFGS_init(l, PV, meshtrace, debug_mode ? &(debug_points[(debug_cnt++) % 9 + 1]) : nullptr);
 
-    if (debug_mode) meshtrace.to_cartesian(PV, debug_point[2]);
+    meshtrace.to_cartesian(PV, temp);
+    debug_points.push_back(temp);
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 0; i++) {
         cout << "iteration: " << i + 1 << endl;
-        if (meshtrace.particle_insert_and_delete(PV, 1.5 * l, l)) {
+        cur_time = std::clock();
+        bool flag = meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
+        time_insert_delete += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
+        if (flag) {
             break;
         };
-        if (debug_mode) meshtrace.to_cartesian(PV, debug_point[3]);
 
-        LBFGS_optimization(l, PV, meshtrace, debug_mode ? &(debug_point[4]) : nullptr);
-        if (debug_mode) meshtrace.to_cartesian(PV, debug_point[5]);
-
-        int removed = meshtrace.remove_boundary(PV, 0.5 * l);
-        if (debug_mode) meshtrace.to_cartesian(PV, debug_point[6]);
-
-        point_sample(V, T, TF, PV, l, out_face_map, meshtrace, removed);
-        if (debug_mode) meshtrace.to_cartesian(PV, debug_point[7]);
+        cur_time = std::clock();
+        LBFGS_optimization(l, PV, meshtrace, debug_mode ? &(debug_points[4]) : nullptr);
+        time_lbfgs += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
+        
+        meshtrace.to_cartesian(PV, temp);
+        debug_points.push_back(temp);
     }
 
+    cur_time = std::clock();
     meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
-    if (debug_mode) meshtrace.to_cartesian(PV, debug_point[8]);
+    time_insert_delete += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
+    meshtrace.to_cartesian(PV, temp); debug_points.push_back(temp);
 
-    meshtrace.remove_boundary(PV, 0.5 * l);
-    meshtrace.to_cartesian(PV, debug_point[9]);
+    cout << "Pipeline Execution Done, insert delete time: " << time_insert_delete << "s, lbfgs time: " << time_lbfgs << "s." <<endl;
+
+    // meshtrace.remove_boundary(PV, 0.5 * l);
+    // meshtrace.to_cartesian(PV, temp); debug_points.push_back(temp);
 
     // if (argc == 5 || argc == 6) 
-    MatrixXd inner = debug_point[9].block(boundary_count, 0, debug_point[9].rows() - boundary_count, 3);
-    write_vtk_points("/home/martinnose/HexDom/tmp/tmp/mesh_points.vtk", inner);
-    // write_binary("inner_points", inner);
+    MatrixXd inner;
+    MatrixXd surface;
 
-    write_matrix_with_binary(argv[5], inner);
+    vector<Particle<>> PV_inner;
+    vector<Particle<>> PV_surface;
+
+    for (int i = 0; i < PV.size(); i++) {
+        if (PV[i].flag == MESHTRACE::FREE) PV_inner.push_back(PV[i]);
+        else PV_surface.push_back(PV[i]);
+    }
+
+    meshtrace.to_cartesian(PV_inner, inner);
+    meshtrace.to_cartesian(PV_surface, surface);
+
+    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_points.vtk", inner);
+    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_surface_points.vtk", surface);
+    
+    for (int i = 0; i < debug_points.size(); i++) {
+        write_vtk_points("/home/ubuntu/HexDom/tmp/cube/particles_" + to_string(i) + ".vtk", debug_points[i]);
+    }
+    
+    // write_binary(argv[5], surface);
+    if (argc == 6) {
+        cout << "write " << surface.size() << " points to " << argv[4] << endl;
+        write_matrix_with_binary(argv[4], surface);
+        cout << "write " << inner.size() << " inner points to " << argv[5] << endl;
+        write_matrix_with_binary(argv[5], inner);
+    }
+    
 
     return 0;
 }

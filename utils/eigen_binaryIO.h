@@ -7,12 +7,16 @@ namespace Eigen{
     template <typename M>
         void write_matrix_with_binary(const std::string& filename, const M& mat)
     {
-      std::ofstream out(filename, std::ios::binary);
-      size_t rows = mat.rows();
-      size_t cols = mat.cols();
-      out.write((char*) (&rows), sizeof(size_t));
-      out.write((char*) (&cols), sizeof(size_t));
-      out.write((char*) mat.data(), rows*cols*sizeof(double));
+        std::ofstream out(filename, std::ios::binary);
+        size_t rows = mat.rows();
+        size_t cols = mat.cols();
+        out.write((char*) (&rows), sizeof(size_t));
+        out.write((char*) (&cols), sizeof(size_t));
+        for (int j = 0; j < cols; j++) {
+            for (int i = 0; i < rows; i++) {
+                out.write((char*) (&mat(i,j)), sizeof(double));
+            }
+        }
     }
 
     template<class Matrix>
