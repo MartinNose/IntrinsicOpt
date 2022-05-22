@@ -104,8 +104,9 @@ public:
         const Eigen::MatrixX<Scalar> &_FF0F,
         const Eigen::MatrixX<Scalar> &_FF1F,
         std::map<vector<int>, pair<int, int>> &_out_face_map,
-        std::vector<bool> & _surface_point, double sharp_threshold = 0.64278760968 // cos(50deg)
+        std::vector<bool> _surface_point, double sharp_threshold = 0.64278760968 // cos(50deg)
     ) : tet_trace(_V, _TT, _FF0T, _FF1T, _FF2T, _surface_point),
+        tri_trace(_V, _TF, _FF0F, _FF1F),
         V(_V), TT(_TT), TF(_TF), FF0T(_FF0T), FF1T(_FF1T), FF2T(_FF2T),
         FF0F(_FF0F), FF1F(_FF1F), out_face_map(_out_face_map), surface_point(_surface_point) {
         igl::per_face_normals(V, TF, tri_normal);
@@ -161,7 +162,9 @@ public:
             frame_field.col(i * 3 + 1) = FF1T.row(i).transpose();
             frame_field.col(i * 3 + 2) = FF2T.row(i).transpose();
         }
-        tri_trace = MeshTrace<double, 3>(_V, _TF, _FF0F, _FF1F, surface_point_adj_faces);
+        tri_trace.vertex_adj_faces = surface_point_adj_faces;
+        tri_trace.vertex_adj_sharp_edges = surface_point_adj_sharp_edges;
+        tri_trace.edge_tri_map = edge_tri_map;
     }
 
     int in_element(Vector3d p) {
@@ -402,6 +405,7 @@ public:
             if (ff0.cross(new_v).dot(n) < -BARYCENTRIC_BOUND) {
                 theta = 2 * igl::PI - theta;
             }
+            assert(abs(p.bc[0] + p.bc[1] + p.bc[2] - 1.) < BARYCENTRIC_BOUND);
 
             return tri_trace.tracing(new_v.norm(), p, theta, foo);
         } else if (p.flag == EDGE) {

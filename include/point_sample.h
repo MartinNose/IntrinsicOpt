@@ -26,7 +26,7 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
     for (int i = 0; i < meshtrace.surface_point.size(); i++) {
         if (!meshtrace.surface_point[i]) continue;
         if (meshtrace.surface_point_adj_sharp_edges.find(i) 
-            == meshtrace.eshtrace.surface_point_adj_sharp_edges.end())
+            == meshtrace.surface_point_adj_sharp_edges.end())
                 continue;
         if (meshtrace.surface_point_adj_sharp_edges[i].size() == 0) { // face
             int face_i = meshtrace.surface_point_adj_faces[i][0];

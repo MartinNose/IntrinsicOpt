@@ -137,16 +137,7 @@ void LBFGS_optimization(double l,
     write_binary("p_orig.dat", P_in_Cartesian);
     write_binary("x.dat", x);
 
-    // if (debug_test) (*debug_test).resize(PV.size(), 3);
-    // for (int i = 0; i < PV.size(); i++) {
-    //     Vector3d displacement;
-    //     displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
-    //     displacement[1] = x[i * 3 + 1] - P_in_Cartesian(i, 1);
-    //     displacement[2] = x[i * 3 + 2] - P_in_Cartesian(i, 2);
-    //     meshtrace.tracing(PV[i], displacement);
-    // }
-
-    #pragma omp parallel for // NOLINT(openmp-use-default-none)
+    // #pragma omp parallel for // NOLINT(openmp-use-default-none)
     for (int i = 0; i < PV.size(); i++) {
         Vector3d displacement;
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
@@ -169,15 +160,12 @@ void LBFGS_optimization(double l,
                 if (bc.minCoeff() > -BARYCENTRIC_BOUND) {
                     ParticleD inserted(tet, bc, FREE);
                     PV[i] = inserted;
-                } else {
-                    meshtrace.tracing(PV[i], displacement);
-                }
-            } else {
-                meshtrace.tracing(PV[i], displacement);
+                    continue;
+                } 
             }
-        } else {
-            meshtrace.tracing(PV[i], displacement);
-        }
+        } 
+        
+        meshtrace.tracing(PV[i], displacement);
 
         // if (flag == MESHTRACE::FREE && PV[i].flag == MESHTRACE::FREE) {
         //     Vector3d target {x[i*3+0], x[i*3+1], x[i*3+2]};

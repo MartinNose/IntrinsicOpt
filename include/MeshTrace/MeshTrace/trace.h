@@ -10,6 +10,7 @@
 #include <vector>
 #include <tuple>
 #include <map>
+#include <set>
 #include <utility>
 
 #define EPSILON 1e-13
@@ -106,24 +107,28 @@ private:
     const Eigen::MatrixX<Scalar> &FF1;
     const Eigen::MatrixX<Scalar> &FF2;
     Eigen::MatrixX<Scalar> N;
+public:
     std::map<int, std::vector<int>> vertex_adj_faces;
     std::map<int, std::set<int>> vertex_adj_sharp_edges;
     std::map<vector<int>, tuple<int, int, bool>> edge_tri_map; // map[{vi,vj} = {face_i, face_j, if_sharp}
 
     vector<int> findAdjacentFace(int face_id, vector<int> index) {
         if (index.size() == 2) {            
-            if (index[0] > index[1]) int tmp = index[0]; index[1] = tmp;
+            if (index[0] > index[1]) {
+                int tmp = index[0]; index[0] = index[1]; index[1] = tmp;
+            }
             assert(edge_tri_map.find(index) != edge_tri_map.end());
             auto t = edge_tri_map[index];
             if (get<2>(t)) {
                 return vector<int>{-1};
             } else {
-                return vector<int>{get<0>(t) == face_id ? get<1>(t) : get<2>(t)};
+                return vector<int>{get<0>(t) == face_id ? get<1>(t) : get<0>(t)};
             }
         } else if (index.size() == 1) {
             assert(vertex_adj_faces.find(index[0]) != vertex_adj_faces.end());
             return vertex_adj_faces[index[0]];
         }
+        assert(false && "error request");
     }
 
     vector<int> findAdjacentCell(int cell_id, vector<int> index) {
@@ -312,7 +317,7 @@ public:
             beta = -beta;
         }
 
-        Vec3 normal = alpha.cross(beta).normalized();
+        Vec3 normal = N.row(start.cell_id).normalized();
 
         Matrix<Scalar, 3, 3> A = AngleAxis<Scalar>(direction, normal).toRotationMatrix();
 
@@ -333,129 +338,169 @@ public:
 
         Matrix<double, Dynamic, 3> temp(1,3);
 
-        if (b0 >= 0 && b1 >= 0 && b2 >= 0) { // the target point is inside the triangle
+        if (endPointB.minCoeff() >= 0) { // the target point is inside the triangle
             start.bc << endPointB;
             callback(start, distance, total + distance);
             return true;
-        } else {
-            int edges[3][2]{ {1, 2}, {2, 0}, {0, 1} };
+        }
+        
+        int edges[3][2]{ {1, 2}, {2, 0}, {0, 1} };
 
-            vector<int> neg_idx;
-            vector<int> pos_idx;
-            for (int i = 0; i < 3; i++) {
-                if(endPointB(i) < -BARYCENTRIC_BOUND) neg_idx.push_back(i);
-                else pos_idx.push_back(i);
-            }
+        vector<int> neg_idx;
+        vector<int> pos_idx;
+        for (int i = 0; i < 3; i++) {
+            if(endPointB(i) < -BARYCENTRIC_BOUND) neg_idx.push_back(i);
+            else pos_idx.push_back(i);
+        }
 
-            if (neg_idx.size() == 1) { // joint is at the edge
-                vector<int> edge = {cell_i[pos_idx[0]], cell_i[pos_idx[1]]};
-                vector<int> res = findAdjacentFace(start.cell_id, edge);
-                if (res[0] == -1) { // SHARP EDGE
+        if (neg_idx.size() == 1) { // joint is at the edge
+            vector<int> edge = {cell_i[pos_idx[0]], cell_i[pos_idx[1]]};
+            vector<int> res = findAdjacentFace(start.cell_id, edge);
+            if (res[0] == -1) { // SHARP EDGE
+                double u, t;
+                Vector3d e0 = V.row(edge[0]);
+                Vector3d e1 = V.row(edge[1]);
+                assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, e0, e1 - e0, u, t, 1e-10));
+                start.bc.resize(1, 4);
+                start.bc[0] = 1 - t;
+                start.bc[1] = t;
+                start.bc[2] = (double) edge[0];
+                start.bc[3] = (double) edge[1];
+                start.flag = EDGE;
+                return true;
+            } else {
+                Vector3d v0 = V.row(cell_i[pos_idx[0]]);
+                Vector3d v1 = V.row(cell_i[pos_idx[1]]);
+                double u, t;
+                assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, EPSILON));
+                Vector3d joint = v0 + t * (v1 - v0);
+                start.cell_id = res[0];
+                Vector3i new_tri = T.row(res[0]);
+                RowVector3d newbc;
+                for (int i = 0; i < 3; i++) {
+                    if (new_tri[i] == cell_i[pos_idx[0]]) newbc[i] = 1 - t;
+                    else if (new_tri[i] == cell_i[pos_idx[1]]) newbc[i] = t; 
+                    else newbc[i] = 0;
+                }
+                start.bc = newbc;
 
-                } else {
-                    Vector3d v0 = V.row(cell_i[pos_idx[0]]);
-                    Vector3d v1 = V.row(cell_i[pos_idx[1]]);
-                    igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, EPSILON)
-                    start.cell_id = res[0];
-                    Vector3i new_tri = T.row(res[0]);
-                    RowVector3d newbc;
-                    for (int i = 0; i < 3; i++) {
-                        if (new_tri[i] == cell_i[pos_idx[0]]) bc[i] = 1 - t;
-                        else if (new_tri[i] == cell_i[pos_idx[1]]) bc[i] = t; 
-                        else bc[i] = 0;
+                Vector3d n = N.row(start.cell_id);
+                ff.normalize();
+                ff = ff - ff.dot(n) * n;
+
+                Vec3 newFF[4] = {FF0.row(start.cell_id) ,FF1.row(start.cell_id)};
+                newFF[2] = -newFF[0];
+                newFF[3] = -newFF[1];
+
+                Scalar max = -1.;
+                Vector3d new_ff;
+                for (auto & curff : newFF) {
+                    Scalar cos = ff.dot(curff.normalized());
+                    if (cos > max) {
+                        max = cos;
+                        new_ff = curff;
                     }
-                    start.bc = newbc;
+                }
+                return traceStep(distance - (joint - startPoint).norm(), start, direction, total, new_ff, callback);;
+            }
+        } else if (neg_idx.size() == 2) { // crossing vertex
+            Vector3d v = V.row(cell_i[pos_idx[0]]);
+            if (((endPoint - startPoint).normalized()).cross((v - startPoint).normalized()).norm() < BARYCENTRIC_BOUND) {
+                if (vertex_adj_sharp_edges[cell_i[pos_idx[0]]].size() != 0) { // encountering vertex
+                    start.bc.resize(1, 3);
+                    start.bc = V.row(cell_i[pos_idx[0]]);
+                    start.flag = POINT;
+                    start.cell_id = cell_i[pos_idx[0]];
                     return true;
                 }
-            } else if (neg_idx.size() == 2) {
-                Vector3d v = V.row(pos_idx[0]);
-                if (((endPoint - startPoint).normalized()).cross((v - startPoint).normalized()).norm() < BARYCENTRIC_BOUND) {
-                    vector<int> candi = findAdjacentFace(start.cell_id, vector<int>{cell_i[pos_idx[0]]});
-
-                }
-            }
-//
-            for (auto & i : edges) {
-                if (start.bc(i[2]) == 0) continue;
-
-                double u, t;
-                int vi0 = cell_i(i[0]);
-                int vi1 = cell_i(i[1]);
-                Vec3 v0 = Cell.col(i[0]);
-                Vec3 v1 = Cell.col(i[1]);
-
-                if (igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, EPSILON)) {
-                    // two segments cross each other
-
-                    if (t < EPSILON) {
-                        std::cerr << "Encountering Crossing vertex case" << std::endl;
-                        return false;
+                vector<int> candi = findAdjacentFace(start.cell_id, vector<int>{cell_i[pos_idx[0]]});
+                for (int j = 0; j < candi.size(); j++) {
+                    vector<Vector3d> e;
+                    int id;
+                    for (int k = 0; k < 3; k++) {
+                        if (cell_i[pos_idx[0]] != T.row(candi[j])[k])
+                            e.push_back(V.row(T.row(candi[j])[k]));
+                        else id = k;
                     }
 
-                    int newCellId;
+                    Vector3d n = N.row(candi[j]).normalized();
+                    Vector3d origin = endPoint - v;
+                    origin = origin - origin.dot(n) * n;
+                    if ((origin.cross(e[0])).dot(e[1].cross(origin)) < 0) continue;
+                    start.cell_id = candi[j];
+                    start.bc = RowVector3d::Zero();
+                    start.bc[id] = 1.;
 
-                    int edge_tmp[2] =  {vi0, vi1};
-                    if (!findAdjacentCell(start.cell_id, edge_tmp, &newCellId)) {
-                        std::cerr << "Encountering not finding adjacent face case" << std::endl;
-                        return false;
-                    }
-
-                    Eigen::Matrix<int, 3, 1> newcell_i = T.row(newCellId);
-                    Eigen::Matrix<Scalar, 1, 3> bc;
-                    Eigen::Matrix3<Scalar> newCell;
-                    for (int j = 0; j < 3; j++) {
-                        int vertexIndex = newcell_i(j);
-                        if (vertexIndex == vi0) {
-                            bc(0, j) = 1 - t;
-                        } else if (vertexIndex == vi1 ) {
-                            bc(0, j) = t;
-                        } else {
-                            bc(0,j) = 0;
-                        }
-                    }
-
-                    start.cell_id = newCellId;
-                    start.bc.row(0) << bc.row(0);
-                    Scalar traveledDistance = u * (endPoint - startPoint).norm();
-
-                    // std::cout << "*************************" << std::endl;
-                    // std::cout << "startPoint: " << startPoint.transpose() << std::endl;
-                    // std::cout << "endPoint: " << (startPoint + u * (endPoint - startPoint)).transpose() << std::endl;
-
-                    callback(start, traveledDistance, total);
-                    if (traveledDistance < EPSILON) {
-                        return true;
-                    }
-                    Vec3 edgeDirect = (v1 - v0).normalized();
+                    ff.normalize();
+                    ff = ff - ff.dot(n) * n;
 
                     Vec3 newFF[4] = {FF0.row(start.cell_id) ,FF1.row(start.cell_id)};
                     newFF[2] = -newFF[0];
                     newFF[3] = -newFF[1];
 
-                    Scalar min = 3;
-                    Vec3 new_ff = newFF[0];
-                    Scalar theta_0 = get_theta(ff, edgeDirect, normal);
-
-                    for (auto & j : newFF) {
-                        Vec3 cur_ff = j.normalized();
-                        Vec3 new_normal = N.row(start.cell_id);
-                        Scalar cur_theta = get_theta(cur_ff, edgeDirect, new_normal);
-
-                        if (abs(theta_0 - cur_theta) < min) {
-                            min = abs(theta_0 - cur_theta);
-                            new_ff = j;
+                    Scalar max = -1.;
+                    Vector3d new_ff;
+                    for (auto & curff : newFF) {
+                        Scalar cos = ff.dot(curff.normalized());
+                        if (cos > max) {
+                            max = cos;
+                            new_ff = curff;
                         }
                     }
+                    return traceStep(distance - (endPoint - v).norm(), start, direction, total, new_ff, callback);
+                }
+            } else {
+                Vector3d v = V.row(cell_i[pos_idx[0]]);
+                for (int i = 0; i < 2; i++) {
+                    Vector3d v1 = V.row(cell_i[neg_idx[i]]);
+                    vector<int> edge = {cell_i[pos_idx[0]], cell_i[neg_idx[i]]};
+                    double u, t;
+                    if (!igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, EPSILON)) continue;
+                    
+                    vector<int> res = findAdjacentFace(start.cell_id, edge);
+                    if (res[0] == -1) { // SHARP EDGE
+                        double u, t;
+                        assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, EPSILON));
+                        start.bc.resize(1, 4);
+                        start.bc[0] = 1 - t;
+                        start.bc[1] = t;
+                        start.bc[2] = (double) cell_i[pos_idx[0]];
+                        start.bc[3] = (double) cell_i[neg_idx[i]];
+                        return true;
+                    } else {
+                        start.cell_id = res[0];
+                        Vector3i new_tri = T.row(res[0]);
+                        RowVector3d newbc;
+                        for (int j = 0; j < 3; j++) {
+                            if (new_tri[j] == cell_i[pos_idx[0]]) newbc[j] = 1 - t;
+                            else if (new_tri[j] == cell_i[neg_idx[i]]) newbc[j] = t; 
+                            else newbc[j] = 0;
+                        }
+                        start.bc = newbc;
 
-                    Matrix<Scalar, Dynamic, 3> new_ff_mark(2, 3);
-                    Vec3 barycenter = (Cell.col(0) + Cell.col(1) + Cell.col(2)) / 3;
-                    new_ff_mark.row(0) = barycenter;
-                    new_ff_mark.row(1) = new_ff;
-                    callback(start, traveledDistance, total);
-                    return traceStep(distance - traveledDistance, start, direction, total + traveledDistance, new_ff, callback);
+                        Vector3d n = N.row(start.cell_id);
+                        ff.normalize();
+                        ff = ff - ff.dot(n) * n;
+
+                        Vec3 newFF[4] = {FF0.row(start.cell_id) ,FF1.row(start.cell_id)};
+                        newFF[2] = -newFF[0];
+                        newFF[3] = -newFF[1];
+
+                        Vector3d new_ff;
+                        Scalar max = -1.;
+                        for (auto & curff : newFF) {
+                            Scalar cos = ff.dot(curff.normalized());
+                            if (cos > max) {
+                                max = cos;
+                                new_ff = curff;
+                            }
+                        }
+                        return traceStep(distance - (endPoint - v).norm(), start, direction, total, new_ff, callback);
+                    } 
                 }
             }
         }
+        assert(false && "impossible situation!");
     }
 
     template <typename F>
@@ -811,13 +856,9 @@ public:
     MeshTrace(const Eigen::MatrixX<Scalar> &_V,
         const Eigen::MatrixXi &_T,
         const Eigen::MatrixX<Scalar> &_FF0,
-        const Eigen::MatrixX<Scalar> &_FF1,
-        std::map<int, std::vector<int>> _vertex_adj_faces;
-        std::map<int, std::set<int>> _vertex_adj_sharp_edges;
-        std::map<vector<int>, tuple<int, int, bool>> _edge_tri_map;
-        ): V(_V), T(const_cast<Eigen::MatrixXi &>(_T)), 
-        FF0(_FF0), FF1(_FF1),
-        vertex_adj_faces(_surface_point), edge_tri_map(_edge_tri_map) {
+        const Eigen::MatrixX<Scalar> &_FF1
+    ): V(_V), T(const_cast<Eigen::MatrixXi &>(_T)), 
+        FF0(_FF0), FF1(_FF1), FF2(_FF1) {
             igl::per_face_normals(V, T, N);
     }
     

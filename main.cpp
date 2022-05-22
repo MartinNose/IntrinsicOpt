@@ -186,7 +186,7 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     meshtrace.to_cartesian(PV, temp);
     debug_points.push_back(temp);
 
-    for (int i = 0; i < 0; i++) {
+    for (int i = 0; i < 10; i++) {
         cout << "iteration: " << i + 1 << endl;
         cur_time = std::clock();
         bool flag = meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
