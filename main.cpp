@@ -167,6 +167,13 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
 
     MeshTraceManager<double> meshtrace(V, T, TF, FF0T, FF1T, FF2T, FF0F, FF1F, out_face_map, surface_point);
 
+    // ParticleD p;
+    // p.cell_id = 8410;
+    // p.bc = RowVector3d(0.0084215667506007952, 0.21193537216738012, 0.77964306108201908);
+    // p.flag = FACE;
+    // Vector3d di {0.67720975144341555, -0.0033049319753077153, 0.73570129631219094};
+    // di *= -1. * 0.030800546378627988;
+    // meshtrace.tracing(p, di);
     vector<ParticleD> PV;
 
     point_sample_init(V, T, TF, PV, l, out_face_map, meshtrace);
@@ -238,9 +245,9 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     // write_binary(argv[5], surface);
     if (argc == 6) {
         cout << "write " << surface.size() << " points to " << argv[4] << endl;
-        write_matrix_with_binary(argv[4], surface);
+        write_matrix_with_binary(argv[4], surface.transpose());
         cout << "write " << inner.size() << " inner points to " << argv[5] << endl;
-        write_matrix_with_binary(argv[5], inner);
+        write_matrix_with_binary(argv[5], inner.transpose());
     }
     
 

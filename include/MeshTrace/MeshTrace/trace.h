@@ -23,7 +23,7 @@ using namespace std;
 
 namespace MESHTRACE {
 
-enum FLAG { POINT, STEP, EDGE, FACE, FREE };
+enum FLAG { STEP, POINT, EDGE, FACE, FREE };
 
 // Usage: MeshTrace<double, 3>::tracing(...);
 template <typename Scalar = double>
@@ -108,6 +108,7 @@ private:
     const Eigen::MatrixX<Scalar> &FF2;
     Eigen::MatrixX<Scalar> N;
 public:
+    const Eigen::MatrixXi& TF;
     std::map<int, std::vector<int>> vertex_adj_faces;
     std::map<int, std::set<int>> vertex_adj_sharp_edges;
     std::map<vector<int>, tuple<int, int, bool>> edge_tri_map; // map[{vi,vj} = {face_i, face_j, if_sharp}
@@ -169,6 +170,30 @@ public:
             cerr << "findAdjacentCell: Invalid index" << endl;
             exit(-1);
         }
+    }
+    
+    void find_cut(const Vector3d &s, const Vector3d &e, 
+                const Vector3d &v0, const Vector3d &v1, const Vector3d &v2,
+                Vector3d& cut) {
+        double u, t;
+        bool if_cut;
+
+        Vector3d target;
+        Vector3d n = (v0 - v1).cross(v0 - v2).normalized();
+        Vector3d displacement = e - s;
+        target = s + (displacement - displacement.dot(n) * n) * 1000;
+
+        if (igl::segment_segment_intersect(s, target - s, v0, v1 - v0, u, t, 1e-10)) {
+            cut = v0 + t * (v1 - v0);
+            return;
+        } else if (igl::segment_segment_intersect(s, target - s, v1, v2 - v1, u, t, 1e-10)) {
+            cut = v1 + t * (v2 - v1);
+            return;
+        } else if (igl::segment_segment_intersect(s, target - s, v2, v0 - v2, u, t, 1e-10)) {
+            cut = v2 + t * (v0 - v2);
+            return;
+        }
+        assert(false && "cut not found");
     }
 
     // Get the theta of a and b with sign
@@ -287,7 +312,12 @@ public:
     std::vector<bool> surface_point; // if ith point in V is on the surface
 
     template <typename F>
-    inline bool traceStep(Scalar distance, Particle<Scalar> &start, double direction, Scalar total, Vector3<Scalar> ff, F &callback) {
+    inline bool traceStep(Scalar distance, int last_cell, Particle<Scalar> &start, double direction, Scalar total, Vector3<Scalar> ff, F &callback) {
+        if (start.bc.minCoeff() < -BARYCENTRIC_BOUND) {
+            cerr << "Invalid bc" << start.bc << endl;
+            assert(start.bc.minCoeff() >= -BARYCENTRIC_BOUND);
+        };
+        int cur_cell = start.cell_id;
         if (distance < 1e-6) return true;
         Eigen::Matrix<int, 3, 1> cell_i = T.row(start.cell_id);
         Eigen::Matrix<Scalar, 3, 3> Cell;
@@ -338,7 +368,7 @@ public:
 
         Matrix<double, Dynamic, 3> temp(1,3);
 
-        if (endPointB.minCoeff() >= 0) { // the target point is inside the triangle
+        if (endPointB.minCoeff() >= -BARYCENTRIC_BOUND) { // the target point is inside the triangle
             start.bc << endPointB;
             callback(start, distance, total + distance);
             return true;
@@ -367,12 +397,12 @@ public:
                 start.bc[2] = (double) edge[0];
                 start.bc[3] = (double) edge[1];
                 start.flag = EDGE;
-                return true;
+                return true; // sharp edge
             } else {
                 Vector3d v0 = V.row(cell_i[pos_idx[0]]);
                 Vector3d v1 = V.row(cell_i[pos_idx[1]]);
                 double u, t;
-                assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, EPSILON));
+                assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, 1e-10));
                 Vector3d joint = v0 + t * (v1 - v0);
                 start.cell_id = res[0];
                 Vector3i new_tri = T.row(res[0]);
@@ -401,11 +431,23 @@ public:
                         new_ff = curff;
                     }
                 }
-                return traceStep(distance - (joint - startPoint).norm(), start, direction, total, new_ff, callback);;
+                // cut on edge
+                if (start.cell_id == last_cell) {
+                    start.bc = RowVector3d(0., 0., 0.);
+                    int joint_idx;
+                    if ((v1 - v0).dot(endPoint - startPoint) > 0) {
+                        joint_idx = pos_idx[1];
+                    } else {
+                        joint_idx = pos_idx[0];
+                    }
+                    start.bc[joint_idx] = 1.;
+                    return traceStep(distance - (V.row(cell_i[joint_idx]) - startPoint.transpose()).norm(), cur_cell, start, direction, total, ff, callback);
+                }
+                return traceStep(distance - (joint - startPoint).norm(), cur_cell, start, direction, total, new_ff, callback);;
             }
         } else if (neg_idx.size() == 2) { // crossing vertex
             Vector3d v = V.row(cell_i[pos_idx[0]]);
-            if (((endPoint - startPoint).normalized()).cross((v - startPoint).normalized()).norm() < BARYCENTRIC_BOUND) {
+            if (((endPoint - startPoint).normalized()).cross((v - startPoint).normalized()).norm() < 1e-6) {
                 if (vertex_adj_sharp_edges[cell_i[pos_idx[0]]].size() != 0) { // encountering vertex
                     start.bc.resize(1, 3);
                     start.bc = V.row(cell_i[pos_idx[0]]);
@@ -418,15 +460,17 @@ public:
                     vector<Vector3d> e;
                     int id;
                     for (int k = 0; k < 3; k++) {
-                        if (cell_i[pos_idx[0]] != T.row(candi[j])[k])
+                        if (cell_i[pos_idx[0]] != T.row(candi[j])[k]) {
                             e.push_back(V.row(T.row(candi[j])[k]));
+                        }
                         else id = k;
                     }
 
                     Vector3d n = N.row(candi[j]).normalized();
                     Vector3d origin = endPoint - v;
-                    origin = origin - origin.dot(n) * n;
-                    if ((origin.cross(e[0])).dot(e[1].cross(origin)) < 0) continue;
+                    origin = origin - origin.dot(n) * n;;
+
+                    if ((origin.cross(e[0] - v)).dot((e[1] - v).cross(origin)) < -BARYCENTRIC_BOUND) continue;
                     start.cell_id = candi[j];
                     start.bc = RowVector3d::Zero();
                     start.bc[id] = 1.;
@@ -447,7 +491,14 @@ public:
                             new_ff = curff;
                         }
                     }
-                    return traceStep(distance - (endPoint - v).norm(), start, direction, total, new_ff, callback);
+                    //crossing vertex
+                    if (start.cell_id == last_cell) {
+                        start.cell_id = cell_i[pos_idx[0]];
+                        start.bc = v.transpose();
+                        start.flag = POINT;
+                        return true;
+                    }
+                    return traceStep(distance - (endPoint - v).norm(), cur_cell, start, direction, total, new_ff, callback);
                 }
             } else {
                 Vector3d v = V.row(cell_i[pos_idx[0]]);
@@ -455,18 +506,24 @@ public:
                     Vector3d v1 = V.row(cell_i[neg_idx[i]]);
                     vector<int> edge = {cell_i[pos_idx[0]], cell_i[neg_idx[i]]};
                     double u, t;
-                    if (!igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, EPSILON)) continue;
+                    if (!igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, 1e-10)) continue;
                     
                     vector<int> res = findAdjacentFace(start.cell_id, edge);
                     if (res[0] == -1) { // SHARP EDGE
                         double u, t;
-                        assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, EPSILON));
+                        assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, 1e-10));
                         start.bc.resize(1, 4);
                         start.bc[0] = 1 - t;
                         start.bc[1] = t;
                         start.bc[2] = (double) cell_i[pos_idx[0]];
                         start.bc[3] = (double) cell_i[neg_idx[i]];
+                        start.flag = EDGE;
+                        // sharp edge
                         return true;
+                    } else if (res[0] == last_cell) { // near edge case
+                        start.bc = RowVector3d(0., 0., 0.);
+                        start.bc[pos_idx[0]] = 1.;
+                        return traceStep(distance - (v - startPoint).norm(), cur_cell, start, direction, total, ff, callback);
                     } else {
                         start.cell_id = res[0];
                         Vector3i new_tri = T.row(res[0]);
@@ -495,7 +552,8 @@ public:
                                 new_ff = curff;
                             }
                         }
-                        return traceStep(distance - (endPoint - v).norm(), start, direction, total, new_ff, callback);
+                        // crossing edge
+                        return traceStep(distance - (endPoint - v).norm(), cur_cell, start, direction, total, new_ff, callback);
                     } 
                 }
             }
@@ -504,17 +562,27 @@ public:
     }
 
     template <typename F>
-    inline bool traceStep(Scalar distance, Particle<Scalar> &start, Matrix <Scalar, 2, 1> direction, Scalar total, F &callback) {
+    inline bool traceStep(Scalar distance, int last_cell, Particle<Scalar> &start, Matrix <Scalar, 2, 1> direction, Scalar total, F &callback) {
         if (start.bc.minCoeff() < -BARYCENTRIC_BOUND) {
             cerr << "Invalid bc" << start.bc << endl;
             assert(start.bc.minCoeff() >= -BARYCENTRIC_BOUND);
         };
         if (distance < 1e-6) return true;
+        int cur_cell = start.cell_id;
         Matrix3<Scalar> ff;
         ff.col(0) << FF0.row(start.cell_id)[0], FF0.row(start.cell_id)[1], FF0.row(start.cell_id)[2];
         ff.col(1) << FF1.row(start.cell_id)[0], FF1.row(start.cell_id)[1], FF1.row(start.cell_id)[2];
         ff.col(2) << FF2.row(start.cell_id)[0], FF2.row(start.cell_id)[1], FF2.row(start.cell_id)[2];
-        
+
+        if (last_cell != -1) {
+            Vector3d last_f = FF0.row(last_cell);
+            if (last_f.dot(ff.col(0)) < 0) ff.col(0) = -ff.col(0);
+            last_f = FF1.row(last_cell);
+            if (last_f.dot(ff.col(1)) < 0) ff.col(1) = -ff.col(1);
+            last_f = FF2.row(last_cell);
+            if (last_f.dot(ff.col(2)) < 0) ff.col(2) = -ff.col(2);
+        }
+
         Eigen::Matrix<int, 4, 1> cell_i = T.row(start.cell_id);
 
         Vec3 v[4];
@@ -596,6 +664,13 @@ public:
 
                 callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                 return true;
+            } else if (new_cell == last_cell) {
+                Vector3d cut;
+                find_cut(startPoint, end_point, vs[0], vs[1], vs[2], cut);
+                RowVector4d new_bc;
+                igl::barycentric_coordinates(cut.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
+                start.bc = new_bc;
+                return traceStep(distance - (cut - startPoint).norm(), last_cell, start, direction, total, callback);
             }
             assert(bc_joint_tet.minCoeff() > -BARYCENTRIC_BOUND && "joint on face");
             start.cell_id = new_cell;
@@ -603,7 +678,7 @@ public:
             callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
             double cur_step = (joint - startPoint).norm();
             if (cur_step < 1e-6) return true;
-            return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+            return traceStep(distance - (joint - startPoint).norm(), cur_cell, start, direction, total, callback);
         } else if (neg_eb_idx.size() == 2) { // endpoint is on the other side of the edge
             vector<int> face_i ={cell_i[pos_eb_idx[0]], cell_i[pos_eb_idx[1]]};
             Vec3 edge[2] = {v[pos_eb_idx[0]], v[pos_eb_idx[1]]};
@@ -638,6 +713,17 @@ public:
                         start.flag = EDGE;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                         return true;
+                    } else if (new_cell == last_cell) {
+                        RowVector4d new_bc = RowVector4d::Zero();
+                        if ((end_point - startPoint).dot(edge[1] - edge[0]) > 0) {
+                            new_bc[pos_eb_idx[1]] = 1.;
+                            joint = edge[1];
+                        } else {
+                            new_bc[pos_eb_idx[0]] = 1.;
+                            joint = edge[0];
+                        }
+                        start.bc = new_bc;
+                        return traceStep(distance - (joint - startPoint).norm(), last_cell, start, direction, total, callback); 
                     } else {
                         Vector4i new_t = T.row(new_cell);
                         Vec3 v0_new = V.row(new_t[0]); Vec3 v1_new = V.row(new_t[1]);
@@ -647,7 +733,7 @@ public:
                         start.cell_id = new_cell;
                         start.bc.row(0) << new_bc;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                        return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+                        return traceStep(distance - (joint - startPoint).norm(), cur_cell, start, direction, total, callback);
                    }
                 }
             }
@@ -672,13 +758,19 @@ public:
 
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                     return true;
+                } else if (new_cell == last_cell) {
+                    Vector3d cut;
+                    int third_v = found_1 ? neg_eb_idx[0] : neg_eb_idx[1];
+                    find_cut(startPoint, end_point, v[pos_eb_idx[0]], v[pos_eb_idx[1]], v[third_v], cut);
+                    RowVector4d new_bc;
+                    igl::barycentric_coordinates(cut.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
+                    start.bc = new_bc;
+                    return traceStep(distance - (cut - startPoint).norm(), last_cell, start, direction, total, callback);
                 }
                 if (bc_joint_tet.minCoeff() > -BARYCENTRIC_BOUND) {
-                    
                     Vector3d new_direct;
                     get_direction(new_cell, direction, new_direct);
                     Vector3d face_n = (v[pos_eb_idx[0]] - joint).cross(v[pos_eb_idx[1]] - joint).normalized();
-
                     if (direct.dot(face_n) * new_direct.dot(face_n) < 0) {
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
                         return true;
@@ -687,7 +779,7 @@ public:
                     start.cell_id = new_cell;
                     start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                    return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+                    return traceStep(distance - (joint - startPoint).norm(), cur_cell, start, direction, total, callback);
                 }
             }
             assert(!found_1 && !found_2);
@@ -713,6 +805,26 @@ public:
 
                 int joint_idx = cell_i[pos_eb_idx[0]];
                 Vec3 joint = v[pos_eb_idx[0]];
+
+                if (surface_point[joint_idx]) {
+                    RowVector4d new_bc = RowVector4d::Zero();
+                    new_bc[pos_eb_idx[0]] = 1.;
+
+                    int face = vertex_adj_faces[joint_idx][0];
+
+                    start.cell_id = face;
+                    start.bc.resize(1, 3);
+                    start.bc = RowVector3d::Zero();
+
+                    for (int i = 0; i < 3; i++) {
+                        if (TF.row(face)[i] == joint_idx) {
+                            start.bc[i] = 1.;
+                        }
+                    }
+                    start.flag = STEP;
+                    callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
+                    return true;
+                }
 
                 RowVector4d temp_bc;
                 for (int i = 0; i < candidates.size(); i++) {
@@ -748,61 +860,10 @@ public:
                         start.cell_id = candidates[i];
                         start.bc << temp_bc;
                         callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                        return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+                        return traceStep(distance - (joint - startPoint).norm(), cur_cell, start, direction, total, callback);
                     }
                 }
-
-                // joint is the endpoint
-                RowVector4d new_bc = RowVector4d::Zero();
-                new_bc[pos_eb_idx[0]] = 1.;
-
-                start.cell_id = cell_i[pos_eb_idx[0]];
-                start.bc.resize(1, 3);
-                start.bc = joint.transpose();
-                start.flag = POINT;
-                callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                return true;
             }
-
-            // joint is on the edge adjacent to v
-//            for (int i = 0; i < 3; i++) {
-//                Vector3d edge_end = V.row(cell_i[neg_eb_idx[i]]);
-//                double u, t;
-//                if (igl::segment_segment_intersect(startPoint,
-//                                                   end_point - startPoint, vertex, edge_end - vertex,
-//                                                   u, t, BARYCENTRIC_BOUND * BARYCENTRIC_BOUND)) {
-//
-//                    Vector3d joint;
-//                    joint = vertex + t * (edge_end - vertex);
-//
-//                    new_cell = compute_new_p(start.cell_id,
-//                                             cell_i[pos_eb_idx[0]], cell_i[neg_eb_idx[i]],
-//                                             end_point);
-//
-//                    RowVector4d new_bc;
-//                    if (new_cell == -1) {
-//                        igl::barycentric_coordinates(joint.transpose(), v[0].transpose(), v[1].transpose(), v[2].transpose(), v[3].transpose(), new_bc);
-//
-//                        start.bc << new_bc;
-//
-//                        start.flag = EDGE;
-//                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-//                        return true;
-//                    } else {
-//                        Vector4i new_t = T.row(new_cell);
-//                        Vec3 v0_new = V.row(new_t[0]);
-//                        Vec3 v1_new = V.row(new_t[1]);
-//                        Vec3 v2_new = V.row(new_t[2]);
-//                        Vec3 v3_new = V.row(new_t[3]);
-//                        igl::barycentric_coordinates(joint.transpose(), v0_new.transpose(), v1_new.transpose(), v2_new.transpose(), v3_new.transpose(), new_bc);
-//                        if (new_bc.minCoeff() < -BARYCENTRIC_BOUND) continue;
-//                        start.cell_id = new_cell;
-//                        start.bc.row(0) << new_bc;
-//                        callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-//                        return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
-//                    }
-//                }
-//            }
 
             // joint is on the face adjacent to v
 
@@ -838,14 +899,18 @@ public:
                         return true;
                     }
 
+                    if (new_cell == last_cell) {
+                        start.bc = RowVector4d::Zero();
+                        start.bc[pos_eb_idx[0]] = 1.;
+                        return traceStep(distance - (v[pos_eb_idx[0]] - startPoint).norm(), last_cell, start, direction, total, callback);
+                    }
+
                     start.cell_id = new_cell;
                     start.bc.row(0) << bc_joint_tet;
                     callback(start, (joint - startPoint).norm(), total + (joint - startPoint).norm());
-                    return traceStep(distance - (joint - startPoint).norm(), start, direction, total, callback);
+                    return traceStep(distance - (joint - startPoint).norm(), cur_cell, start, direction, total, callback);
                 }
             }
-
-
 
         }
         cout << "trace failed " << "start_point: " << startPoint.transpose() << "bc: " << start.bc <<
@@ -858,15 +923,15 @@ public:
         const Eigen::MatrixX<Scalar> &_FF0,
         const Eigen::MatrixX<Scalar> &_FF1
     ): V(_V), T(const_cast<Eigen::MatrixXi &>(_T)), 
-        FF0(_FF0), FF1(_FF1), FF2(_FF1) {
+        FF0(_FF0), FF1(_FF1), FF2(_FF1), TF(_T) {
             igl::per_face_normals(V, T, N);
     }
     
-    MeshTrace(const Eigen::MatrixX<Scalar> &_V, const Eigen::MatrixXi &_T,
+    MeshTrace(const Eigen::MatrixX<Scalar> &_V, const Eigen::MatrixXi &_T,  const Eigen::MatrixXi &_TF,
               const Eigen::MatrixX<Scalar> &_FF0, const Eigen::MatrixX<Scalar> &_FF1, const Eigen::MatrixX<Scalar> &_FF2,
               vector<bool> _surface_point
               ):
-        V(_V), T(_T), FF0(_FF0), FF1(_FF1), FF2(_FF2),
+        V(_V), T(_T), TF(_TF), FF0(_FF0), FF1(_FF1), FF2(_FF2),
         surface_point(_surface_point) {
             vertice_adjacent_map.resize(V.rows());
             for (int i = 0; i < T.rows(); i++) {
@@ -904,11 +969,11 @@ public:
 //         double    // total traveled length
 //     > // remove the comment if your compiler support c++20 concepts.
     inline bool tracing(Scalar distance, Particle<double> &start, Matrix <Scalar, 2, 1> direction, F &callback) {
-        return traceStep<F>(distance, start, direction, 0, callback);
+        return traceStep<F>(distance, -1, start, direction, 0, callback);
     }
     template <typename F>
     inline bool tracing(Scalar distance, Particle<double> &start, double direction, F &callback) {
-        return traceStep<F>(distance, start, direction, 0, Vector3<Scalar>(FF0.row(start.cell_id)),callback);
+        return traceStep<F>(distance, -1, start, direction, 0, Vector3<Scalar>(FF0.row(start.cell_id)),callback);
     }
 };
 }
