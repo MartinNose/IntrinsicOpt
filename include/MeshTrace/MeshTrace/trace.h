@@ -448,11 +448,19 @@ public:
         } else if (neg_idx.size() == 2) { // crossing vertex
             Vector3d v = V.row(cell_i[pos_idx[0]]);
             if (((endPoint - startPoint).normalized()).cross((v - startPoint).normalized()).norm() < 1e-6) {
-                if (vertex_adj_sharp_edges[cell_i[pos_idx[0]]].size() != 0) { // encountering vertex
+                int sharp_cnt = vertex_adj_sharp_edges[cell_i[pos_idx[0]]].size();
+                if (sharp_cnt == 1 || sharp_cnt >= 3) { // encountering vertex
                     start.bc.resize(1, 3);
                     start.bc = V.row(cell_i[pos_idx[0]]);
                     start.flag = POINT;
                     start.cell_id = cell_i[pos_idx[0]];
+                    return true;
+                } else if (sharp_cnt == 2) {
+                    start.bc[0] = 1.;
+                    start.bc[1] = 0;
+                    start.bc[2] = (double) cell_i[pos_idx[0]];
+                    start.bc[3] = (double) vertex_adj_sharp_edges[cell_i[pos_idx[0]]][0];
+                    start.flag = EDGE;
                     return true;
                 }
                 vector<int> candi = findAdjacentFace(start.cell_id, vector<int>{cell_i[pos_idx[0]]});
@@ -561,6 +569,8 @@ public:
         assert(false && "impossible situation!");
     }
 
+    Matrix3d last_ff;
+
     template <typename F>
     inline bool traceStep(Scalar distance, int last_cell, Particle<Scalar> &start, Matrix <Scalar, 2, 1> direction, Scalar total, F &callback) {
         if (start.bc.minCoeff() < -BARYCENTRIC_BOUND) {
@@ -575,12 +585,11 @@ public:
         ff.col(2) << FF2.row(start.cell_id)[0], FF2.row(start.cell_id)[1], FF2.row(start.cell_id)[2];
 
         if (last_cell != -1) {
-            Vector3d last_f = FF0.row(last_cell);
-            if (last_f.dot(ff.col(0)) < 0) ff.col(0) = -ff.col(0);
-            last_f = FF1.row(last_cell);
-            if (last_f.dot(ff.col(1)) < 0) ff.col(1) = -ff.col(1);
-            last_f = FF2.row(last_cell);
-            if (last_f.dot(ff.col(2)) < 0) ff.col(2) = -ff.col(2);
+            if (last_ff.col(0).dot(ff.col(0)) < 0) ff.col(0) = -ff.col(0);
+            if (last_ff.col(1).dot(ff.col(1)) < 0) ff.col(1) = -ff.col(1);
+            if (last_ff.col(2).dot(ff.col(2)) < 0) ff.col(2) = -ff.col(2);
+        } else {
+            last_ff = ff;
         }
 
         Eigen::Matrix<int, 4, 1> cell_i = T.row(start.cell_id);
