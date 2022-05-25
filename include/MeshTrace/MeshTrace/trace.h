@@ -456,6 +456,7 @@ public:
                     start.cell_id = cell_i[pos_idx[0]];
                     return true;
                 } else if (sharp_cnt == 2) {
+                    start.bc.resize(1, 4);
                     start.bc[0] = 1.;
                     start.bc[1] = 0;
                     start.bc[2] = (double) cell_i[pos_idx[0]];
