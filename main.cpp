@@ -180,6 +180,7 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     MatrixXd temp;
     meshtrace.to_cartesian(PV, temp);
     debug_points.push_back(temp);
+    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_surface_points.vtk", temp);
 
     int debug_cnt = 0;
     cur_time = std::clock();
@@ -205,14 +206,6 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         cur_time = std::clock();
         LBFGS_optimization(l, PV, meshtrace, debug_mode ? &(debug_points[4]) : nullptr);
         time_lbfgs += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
-        
-        if (i == 0) {
-            vector<ParticleD> surface;
-            for (auto &p: PV) {
-                if (p.flag != FREE) surface.push_back(p);
-            }
-            PV = surface;
-        }
 
         meshtrace.to_cartesian(PV, temp);
         debug_points.push_back(temp);
@@ -229,19 +222,9 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     // meshtrace.to_cartesian(PV, temp); debug_points.push_back(temp);
 
     // if (argc == 5 || argc == 6) 
-    MatrixXd inner;
     MatrixXd surface;
 
-    vector<Particle<>> PV_inner;
-    vector<Particle<>> PV_surface;
-
-    for (int i = 0; i < PV.size(); i++) {
-        if (PV[i].flag == MESHTRACE::FREE) PV_inner.push_back(PV[i]);
-        else PV_surface.push_back(PV[i]);
-    }
-
-    meshtrace.to_cartesian(PV_inner, inner);
-    meshtrace.to_cartesian(PV_surface, surface);
+    meshtrace.to_cartesian(PV, surface);
 
     write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_surface_points.vtk", surface);
     
@@ -249,12 +232,10 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         write_vtk_points("/home/ubuntu/HexDom/tmp/cube/particles_" + to_string(i) + ".vtk", debug_points[i]);
     }
     
-    // write_binary(argv[5], surface);
     if (argc == 6) {
         cout << "write " << surface.size() << " points to " << argv[4] << endl;
         write_matrix_with_binary(argv[4], surface.transpose());
     }
-    
 
     return 0;
 }

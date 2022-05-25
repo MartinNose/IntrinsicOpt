@@ -4,7 +4,9 @@
 #include "iostream"
 #include "MeshTrace/trace.h"
 #include "MeshTrace/trace_manager.h"
+#include "igl/face_areas.h"
 #include "Eigen/Core"
+#include <utility>
 #include "omp.h"
 #include <vector>
 #include <map>
@@ -16,13 +18,14 @@ using namespace Eigen;
 using namespace MESHTRACE;
 
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc);
+void point_sample_tri(Vector3d v0, Vector3d v1, Vector3d v2, RowVector3d &bc);
 
 template<typename Particles>
 void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF, Particles &P, double l, map<vector<int>, pair<int, int>> &out_face_map, MESHTRACE::MeshTraceManager<double> &meshtrace) {
     cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
     cout << "T rows: " << T.rows() << " cols: " << T.cols() << endl;
 
-    vector<int> num_in_tet(T.rows(), 0);
+    vector<int> num_in_tri(TF.rows(), 0);
     for (int i = 0; i < meshtrace.surface_point.size(); i++) {
         if (!meshtrace.surface_point[i]) continue;
         if (meshtrace.surface_point_adj_sharp_edges.find(i) 
@@ -36,6 +39,7 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
             }
             ParticleD p(face_i, bc, FACE);
             P.push_back(p);
+            num_in_tri[face_i]++;
         } else if (meshtrace.surface_point_adj_sharp_edges[i].size() == 2) { // edge
             int ej = *(meshtrace.surface_point_adj_sharp_edges[i].begin());
             ParticleD p;
@@ -47,48 +51,47 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
             p.bc[3] = (double)ej;
             p.flag = EDGE;
             P.push_back(p);
+            vector<int> edge = {min(i, ej), max(i, ej)};
+            num_in_tri[get<0>(meshtrace.edge_tri_map[edge])]++;
         } else { // p
             ParticleD p;
             p.cell_id = i;
             p.bc = V.row(i);
             p.flag = POINT;
             P.push_back(p);
+            int tri_i = meshtrace.surface_point_adj_faces[i][0];
+            num_in_tri[tri_i]++;
         }
-        vector<int> key = {TF.row(i)[0], TF.row(i)[1], TF.row(i)[2]};
-        sort(key.begin(), key.end());
-        int tet_i = out_face_map[key].second;
-        num_in_tet[tet_i]++;
+        
     }
 
+    double total_area = 0;
+    std::vector<double> area(TF.rows());
 
-    double total_volume = 0;
-    std::vector<double> volume(T.rows());
-
-    #pragma omp parallel for reduction(+:total_volume)
-    for (int i = 0; i < T.rows(); i++) {
-        auto &&cur = T.row(i);
+    #pragma omp parallel for reduction(+:total_area)
+    for (int i = 0; i < TF.rows(); i++) {
+        auto &&cur = TF.row(i);
 
         Vector3d v0 = V.row(cur[0]);
         Vector3d v1 = V.row(cur[1]);
         Vector3d v2 = V.row(cur[2]);
-        Vector3d v3 = V.row(cur[3]);
 
-        volume[i] = abs(igl::volume_single(v0, v1, v2, v3));
-        total_volume += volume[i];
+        area[i] = 0.5 * abs((v1-v0).cross(v2-v0).norm());
+        total_area += area[i];
     }
     // Total number of points
     cout << "lattice: " << l << endl;
-    int total = ceil(total_volume / pow(l, 3) * 2);
+    int total = ceil(total_area / pow(l, 2) * 4);
     int n = max(total - (int)P.size(), 1); // to add
     cout << "Boundary points: " << P.size() << endl;
-    cout << "total volume: " << total_volume << " sampling " << n << " particles." << endl;
+    cout << "total area: " << total_area << " sampling " << n << " particles." << endl;
 
     std::random_device rd;
     std::mt19937 rng(rd());
     std::uniform_real_distribution<double> distribution(0, 1);
-    std::vector<double> possible(volume.size());
-    for (int i = 0; i < volume.size(); i++) {
-        possible[i] = total * volume[i] / total_volume - num_in_tet[i];
+    std::vector<double> possible(area.size());
+    for (int i = 0; i < area.size(); i++) {
+        possible[i] = total * (area[i] / total_area) - num_in_tri[i];
     }
     std::discrete_distribution<size_t> dist6(possible.begin(),
                                             possible.end());
@@ -98,118 +101,27 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
             Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
     };
     for (int i = 0; i < n; i++) {
-        int tet;
-        RowVector4d bc;
+        int tri;
+        RowVector3d bc;
         MESHTRACE::ParticleD p;
-        p.flag = MESHTRACE::FREE;
-        do {
-            tet = dist6(rng);
-            p.cell_id = tet;
-            auto &&cur = T.row(tet);
-            Vector3d v[4];
-            v[0] = V.row(T(tet,0));
-            v[1] = V.row(T(tet,1));
-            v[2] = V.row(T(tet,2));
-            v[3] = V.row(T(tet,3));
+        p.flag = MESHTRACE::FACE;
+        tri = dist6(rng);
+        p.cell_id = tri;
+        Vector3d v[4];
+        v[0] = V.row(TF(tri,0));
+        v[1] = V.row(TF(tri,1));
+        v[2] = V.row(TF(tri,2));
 
-            point_sample_tet(v[0], v[1], v[2], v[3], bc);
-            p.bc = bc;
-        } while(meshtrace.on_surface(p, 0.5 * l));
-        if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {
-            std::cout << tet << "th cell with bc: " << bc << std::endl;
+        point_sample_tri(v[0], v[1], v[2], bc);
+        p.bc = bc;
+
+        if (abs(bc[0] + bc[1] + bc[2] - 1) > 0.000000001) {
+            std::cout << tri << "th cell with bc: " << bc << std::endl;
         }
         P.push_back(p);
-        if (i % 10000 == 0) cout << "[" << i << "/" << n << "] inner points sampled." << endl; 
+        if (i % 10000 == 0) cout << "[" << i << "/" << n << "] surface points sampled." << endl; 
     }
     cout << "sampling done. " << P.size() << " particles sampled." << endl;
-}
-
-
-template<typename Particles>
-void point_sample(const MatrixXd &V, const MatrixXi &T,
-                  const MatrixXi &TF, Particles &P, double l,
-                  map<vector<int>, pair<int, int>> &out_face_map,
-                  MESHTRACE::MeshTraceManager<double> &meshtrace,
-                  int to_add) {
-    cout << "V rows: " << V.rows() << " cols: " << V.cols() << endl;
-
-    vector<int> num_in_tet(T.rows(), 0);
-    double total_volume = 0;
-    std::vector<double> volume(T.rows());
-
-    for (int i = 0; i < P.size(); i++) {
-        if (P[i].bc.cols() == 3) {
-            RowVector3i face = TF.row(P[i].cell_id);
-            vector<int> key(3);
-            key[0] = face[0];
-            key[1] = face[1];
-            key[2] = face[2];
-            sort(key.begin(), key.end());
-            assert(out_face_map.find(key) != out_face_map.end());
-            num_in_tet[out_face_map[key].second]++;
-        } else if (P[i].bc.cols() == 4){
-            num_in_tet[P[i].cell_id]++;
-        }
-    }
-
-#pragma omp parallel for reduction(+:total_volume)
-    for (int i = 0; i < T.rows(); i++) {
-        auto &&cur = T.row(i);
-
-        Vector3d v0 = V.row(cur[0]);
-        Vector3d v1 = V.row(cur[1]);
-        Vector3d v2 = V.row(cur[2]);
-        Vector3d v3 = V.row(cur[3]);
-
-        volume[i] = abs(igl::volume_single(v0, v1, v2, v3));
-        total_volume += volume[i];
-    }
-    // Total number of points
-    cout << "lattice: " << l << endl;
-    int total = ceil(total_volume / pow(l, 3) * 2);
-
-    std::random_device rd;
-    std::mt19937 rng(rd());
-    std::uniform_real_distribution<double> distribution(0, 1);
-    std::vector<double> possible(volume.size());
-    for (int i = 0; i < volume.size(); i++) {
-        possible[i] = std::max(total * volume[i] / total_volume - num_in_tet[i], 0.);
-    }
-    std::discrete_distribution<size_t> dist6(possible.begin(),
-                                             possible.end());
-
-    vector<Vector3d> BCC = {
-            Vector3d(l, 0, 0), Vector3d(-l, 0, 0), Vector3d(0, l, 0),
-            Vector3d(0, -l, 0), Vector3d(0, 0, l), Vector3d(0, 0, -l)
-    };
-
-    for (int i = 0; i < to_add; i++) {
-        // get num point
-        // int num = ceil((volume[i] / total_volume) * n);
-        int tet;
-        RowVector4d bc;
-        MESHTRACE::ParticleD p;
-        p.flag = MESHTRACE::FREE;
-        do {
-            tet = dist6(rng);
-            p.cell_id = tet;
-            auto &&cur = T.row(tet);
-            Vector3d v[4];
-            v[0] = V.row(T(tet,0));
-            v[1] = V.row(T(tet,1));
-            v[2] = V.row(T(tet,2));
-            v[3] = V.row(T(tet,3));
-
-            point_sample_tet(v[0], v[1], v[2], v[3], bc);
-            p.bc = bc;
-        } while(meshtrace.on_surface(p, 0.5 * l));
-        if (abs(bc[0] + bc[1] + bc[2] + bc[3] - 1) > 0.000000001) {
-            std::cout << tet << "th cell with bc: " << bc << std::endl;
-        }
-        P.push_back(p);
-        if (i % 1000 == 0) cout << "[" << i << "/" << to_add << "] inner points sampled." << endl;
-    }
-    cout << "sampling done. " << endl;
 }
 
 void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVector4d &bc) {
@@ -244,4 +156,23 @@ void point_sample_tet(Vector3d v0, Vector3d v1, Vector3d v2, Vector3d v3, RowVec
     RowVector3d p = s * a + t * b + u * c + v0.transpose();
 
     igl::barycentric_coordinates(p, v0.transpose(), v1.transpose(), v2.transpose(), v3.transpose(), bc);
+}
+
+void point_sample_tri(Vector3d v0, Vector3d v1, Vector3d v2, RowVector3d &bc) {
+    RowVector3d a, b;
+    a = v1 - v0;
+    b = v2 - v0;
+
+    double u = (double)rand() / (double)RAND_MAX;
+    double t = (double)rand() / (double)RAND_MAX;
+
+    if (u + t > 1) {
+        u = 1 - u;
+        t = 1 - t;
+    }
+
+
+    RowVector3d p = u * a + t * b + v0.transpose();
+
+    igl::barycentric_coordinates(p, v0.transpose(), v1.transpose(), v2.transpose(), bc);
 }
