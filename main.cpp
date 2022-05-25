@@ -206,6 +206,14 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         LBFGS_optimization(l, PV, meshtrace, debug_mode ? &(debug_points[4]) : nullptr);
         time_lbfgs += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
         
+        if (i == 0) {
+            vector<ParticleD> surface;
+            for (auto &p: PV) {
+                if (p.flag != FREE) surface.push_back(p);
+            }
+            PV = surface;
+        }
+
         meshtrace.to_cartesian(PV, temp);
         debug_points.push_back(temp);
     }
@@ -235,7 +243,6 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     meshtrace.to_cartesian(PV_inner, inner);
     meshtrace.to_cartesian(PV_surface, surface);
 
-    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_points.vtk", inner);
     write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_surface_points.vtk", surface);
     
     for (int i = 0; i < debug_points.size(); i++) {
@@ -246,8 +253,6 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     if (argc == 6) {
         cout << "write " << surface.size() << " points to " << argv[4] << endl;
         write_matrix_with_binary(argv[4], surface.transpose());
-        cout << "write " << inner.size() << " inner points to " << argv[5] << endl;
-        write_matrix_with_binary(argv[5], inner.transpose());
     }
     
 

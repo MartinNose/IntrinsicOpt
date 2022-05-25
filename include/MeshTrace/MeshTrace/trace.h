@@ -459,7 +459,7 @@ public:
                     start.bc[0] = 1.;
                     start.bc[1] = 0;
                     start.bc[2] = (double) cell_i[pos_idx[0]];
-                    start.bc[3] = (double) vertex_adj_sharp_edges[cell_i[pos_idx[0]]][0];
+                    start.bc[3] = (double) *(vertex_adj_sharp_edges[cell_i[pos_idx[0]]].begin());
                     start.flag = EDGE;
                     return true;
                 }

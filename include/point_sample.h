@@ -41,8 +41,8 @@ void point_sample_init(const MatrixXd &V, const MatrixXi &T, const MatrixXi &TF,
             ParticleD p;
             p.cell_id = i;
             p.bc.resize(1, 4);
-            p.bc[0] = 1;
-            p.bc[1] = 0;
+            p.bc[0] = 0.5;
+            p.bc[1] = 0.5;
             p.bc[2] = (double)i;
             p.bc[3] = (double)ej;
             p.flag = EDGE;

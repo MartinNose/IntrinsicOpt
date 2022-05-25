@@ -380,9 +380,56 @@ public:
                     new_particles.push_back(candidate);
                 }
             } else if (new_particles[i].flag == EDGE) {
+                pair<int, int> edge_index = new_particles[i].get_edge();
+                int e_i = edge_index.first;
+                int e_j = edge_index.second;
 
+                Vector3d vi = V.row(e_i);
+                Vector3d vj = V.row(e_j);
+
+                Vector3d edge_v = (vj - vi).normalized();
+
+                double t = -1.;
+                for (int k = 0; k < 1; k++) {
+                    t*=-1.;
+                    ParticleD candidate = new_particles[i];//todo local lattice
+                    tracing(candidate, t * lattice * edge_v);
+                    
+                    Vector3d c;
+                    to_cartesian(candidate, c);
+                
+                    std::vector<std::pair<size_t, double>> ret_matches;
+                    kdtree.index->radiusSearch(&c[0], n_r * n_r, ret_matches, params);
+
+                    vector<double> D;
+                    for (int j = 0; j < ret_matches.size() && D.size() < 1; j++) {
+                        if (!removed[ret_matches[j].first] && 
+                            candidate.flag >= P[ret_matches[j].first].flag) {
+                            D.push_back(sqrt(ret_matches[j].second));
+                        }
+                    }
+
+                    if (!D.empty() && D[0] < 0.7 * lattice) continue;
+
+                    double min_d = 1e20;
+                    if (candi_mat.rows() != 0) {
+                        Eigen::RowVectorXd row = c.transpose();
+                        Eigen::MatrixXd Mat(row.colwise().replicate(candi_mat.rows()));
+                        Mat = Mat - candi_mat;
+                        auto arr = Mat.array() * Mat.array();
+                        auto col = arr.col(0) + arr.col(1) + arr.col(2);
+                        min_d = sqrt(col.minCoeff());
+                    }
+
+                    if (min_d < 0.8 * lattice) continue;
+
+                    candi_mat.conservativeResize(candi_mat.rows() + 1, 3);
+                    candi_mat.row(candi_mat.rows() - 1) = c.transpose();
+                    candidates.push_back(candidate);
+                    new_particles.push_back(candidate);
+                }     
             } else if (new_particles[i].flag == POINT) {
-
+                // do nothing
             }
         }
 
