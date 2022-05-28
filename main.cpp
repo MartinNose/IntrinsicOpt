@@ -180,19 +180,14 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
     MatrixXd temp;
     meshtrace.to_cartesian(PV, temp);
     debug_points.push_back(temp);
-    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_surface_points.vtk", temp);
+    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/sample.vtk", temp);
 
     int debug_cnt = 0;
     cur_time = std::clock();
     meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
     time_insert_delete += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
-    meshtrace.to_cartesian(PV, temp);
-    debug_points.push_back(temp);
 
     LBFGS_init(l, PV, meshtrace, debug_mode ? &(debug_points[(debug_cnt++) % 9 + 1]) : nullptr);
-
-    meshtrace.to_cartesian(PV, temp);
-    debug_points.push_back(temp);
 
     for (int i = 0; i < 10; i++) {
         cout << "iteration: " << i + 1 << endl;
@@ -207,14 +202,11 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
         LBFGS_optimization(l, PV, meshtrace, debug_mode ? &(debug_points[4]) : nullptr);
         time_lbfgs += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
 
-        meshtrace.to_cartesian(PV, temp);
-        debug_points.push_back(temp);
     }
 
     cur_time = std::clock();
     meshtrace.particle_insert_and_delete(PV, 1.5 * l, l);
     time_insert_delete += (std::clock() - cur_time) / (double) CLOCKS_PER_SEC;
-    meshtrace.to_cartesian(PV, temp); debug_points.push_back(temp);
 
     cout << "Pipeline Execution Done, insert delete time: " << time_insert_delete << "s, lbfgs time: " << time_lbfgs << "s." <<endl;
 

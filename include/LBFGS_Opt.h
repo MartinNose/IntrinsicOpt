@@ -76,11 +76,15 @@ void LBFGS_optimization(double l,
             Vector3d fia = Vector3d::Zero();
             for (int j = 0; j < ret_matches.size(); j++) {
                 if (ret_matches[j].first == i) continue;
+                Vector3d n_0 = meshtrace.tri_normal.row(meshtrace.get_tri_id(particle));
+                ParticleD par_j = PV[ret_matches[j].first];
+                Vector3d n_1 = meshtrace.tri_normal.row(meshtrace.get_tri_id(par_j));
+                if (n_0.dot(n_1) < 0) continue;
 
                 Vector3d pj = points_vec[ret_matches[j].first];
 
                 Matrix3d FF;
-                meshtrace.get_mid_frame(pi, pj, FF);
+                meshtrace.get_mid_frame(particle, par_j, FF);
 
                 Matrix3d B = FF.inverse();
 
@@ -89,13 +93,25 @@ void LBFGS_optimization(double l,
 
                 double ENN = 0;
                 Vector3d fij = Vector3d::Zero();
-                for (const Vector3d &h: BCC) {
-                    double g_exp_0 = g_exp(B * vij - h);
-                    ENN -= g_exp_0;
-                    fij -= (B * vij - h) / (sigma * sigma) * g_exp_0;
+
+                int mark;
+                double max = -1.;
+                for (int i = 0; i < 3; i++) {
+                    double cos = abs(n_0.dot(FF.col(i)));
+                    if (cos > max) {
+                        max = cos;
+                        mark = i;
+                    }
                 }
-                fij /= 6.;
-                ENN /= 6.;
+
+                for (int i = 0; i < 6; i++) {
+                    if (i / 2 == mark) continue;
+                    double g_exp_0 = g_exp(B * vij - BCC[i]);
+                    ENN -= g_exp_0;
+                    fij -= (B * vij - BCC[i]) / (sigma * sigma) * g_exp_0;
+                }
+                fij *= 0.25;
+                ENN /= 0.25;
                 Vector3d f = FF * fij + vij / (sigma * sigma) * g_exp_1;
                 fia += f;
                 EN += ENN + g_exp_1;
@@ -137,7 +153,7 @@ void LBFGS_optimization(double l,
     write_binary("p_orig.dat", P_in_Cartesian);
     write_binary("x.dat", x);
 
-    // #pragma omp parallel for // NOLINT(openmp-use-default-none)
+    #pragma omp parallel for // NOLINT(openmp-use-default-none)
     for (int i = 0; i < PV.size(); i++) {
         Vector3d displacement;
         displacement[0] = x[i * 3 + 0] - P_in_Cartesian(i, 0);
@@ -149,21 +165,21 @@ void LBFGS_optimization(double l,
 
         Vector3d target {x[i*3+0], x[i*3+1], x[i*3+2]};
 
-        if (PV[i].flag == FREE) {
-            int tet = meshtrace.in_element(target);
-            if (tet != -1) {
-                RowVector4d bc;
-                igl::barycentric_coordinates(target.transpose(), 
-                    meshtrace.V.row(meshtrace.TT.row(tet)[0]), meshtrace.V.row(meshtrace.TT.row(tet)[1]), 
-                    meshtrace.V.row(meshtrace.TT.row(tet)[2]), meshtrace.V.row(meshtrace.TT.row(tet)[3]), 
-                bc);
-                if (bc.minCoeff() > -BARYCENTRIC_BOUND) {
-                    ParticleD inserted(tet, bc, FREE);
-                    PV[i] = inserted;
-                    continue;
-                } 
-            }
-        } 
+        // if (PV[i].flag == FREE) {
+        //     int tet = meshtrace.in_element(target);
+        //     if (tet != -1) {
+        //         RowVector4d bc;
+        //         igl::barycentric_coordinates(target.transpose(), 
+        //             meshtrace.V.row(meshtrace.TT.row(tet)[0]), meshtrace.V.row(meshtrace.TT.row(tet)[1]), 
+        //             meshtrace.V.row(meshtrace.TT.row(tet)[2]), meshtrace.V.row(meshtrace.TT.row(tet)[3]), 
+        //         bc);
+        //         if (bc.minCoeff() > -BARYCENTRIC_BOUND) {
+        //             ParticleD inserted(tet, bc, FREE);
+        //             PV[i] = inserted;
+        //             continue;
+        //         } 
+        //     }
+        // } 
         
         meshtrace.tracing(PV[i], displacement);
 

@@ -820,8 +820,7 @@ public:
         assert(false && "invalid flag");
     }
 
-    void get_frame(int tet, MatrixXd &ff) {
-        ff.resize(3, 3);
+    void get_frame(int tet, Matrix3d &ff) {
         ff.col(0) = FF0T.row(tet).transpose();
         ff.col(1) = FF1T.row(tet).transpose();
         ff.col(2) = FF2T.row(tet).transpose();
@@ -836,5 +835,33 @@ public:
             ff = MatrixXd::Identity(3, 3);
         }
     }
+
+    int get_tri_id(const ParticleD &p) {
+       if (p.flag == FACE) {
+            return p.cell_id;
+        }
+        if (p.flag == EDGE) {
+            auto [ei, ej] = p.get_edge();
+            vector<int> edge = {min(ei, ej), max(ei, ej)};
+            int face_i = get<0>(edge_tri_map[edge]);
+            return face_i;
+        }
+        if (p.flag == POINT) {
+            return surface_point_adj_faces[p.cell_id][0];
+        }
+        assert(false && "invalid flag");
+    } 
+
+    void get_mid_frame(const ParticleD &pi, const ParticleD &pj, Matrix3d &ff) {
+        ParticleD tmp = pi;
+        Vector3d vi, vj;
+
+        to_cartesian(pi, vi);
+        to_cartesian(pj, vj);
+        
+        tracing(tmp, 0.5 * (vj - vi));
+        get_frame(get_tet_id(tmp), ff);
+    }
+
 };
 } // namespace MESHTRACE
