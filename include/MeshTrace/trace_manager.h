@@ -124,7 +124,7 @@ public:
                 if (edge_tri_map.find(edge) == edge_tri_map.end()) {
                     edge_tri_map[edge] = make_tuple(i, i, false);
                 } else {
-                    assert(get<0>(edge_tri_map[edge]) == get<0>(edge_tri_map[edge]) && "one edge should only be visited twice");
+                    assert(get<0>(edge_tri_map[edge]) == get<1>(edge_tri_map[edge]) && "one edge should only be visited twice");
                     get<1>(edge_tri_map[edge]) = i;
                     bool if_sharp = tri_normal.row(get<0>(edge_tri_map[edge])).dot(tri_normal.row(i)) <= sharp_threshold;
                     get<2>(edge_tri_map[edge]) = if_sharp;
@@ -583,9 +583,10 @@ public:
             return true;
         } else if (p.flag == POINT) {
             return true;
-        } else {
-            assert(false && "Illegal Flag");
         }
+        assert(false && "Illegal Flag");
+        cerr << "tracing: failed" << endl;
+        exit(-1);
     }
 
     inline void project(const Particle<>& p, Vector3d &v) {
@@ -817,7 +818,8 @@ public:
             assert(out_face_map.find(face) != out_face_map.end());
             return out_face_map[face].second;
         }
-        assert(false && "invalid flag");
+        cerr << "invalid flag" << endl;
+        exit(-1);
     }
 
     void get_frame(int tet, Matrix3d &ff) {
@@ -849,7 +851,8 @@ public:
         if (p.flag == POINT) {
             return surface_point_adj_faces[p.cell_id][0];
         }
-        assert(false && "invalid flag");
+        cerr << "invalid flag" << endl;
+        exit(-1);
     } 
 
     void get_mid_frame(const ParticleD &pi, const ParticleD &pj, Matrix3d &ff) {

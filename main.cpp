@@ -218,11 +218,13 @@ int main(int argc, char* argv[]) { // input tet_mesh, frame, lattice, out_put_fi
 
     meshtrace.to_cartesian(PV, surface);
 
-    write_vtk_points("/home/ubuntu/HexDom/tmp/tmp/mesh_surface_points.vtk", surface);
+    string a(argv[4]);
+
+    write_vtk_points(a + ".vtk", surface);
     
-    for (int i = 0; i < debug_points.size(); i++) {
-        write_vtk_points("/home/ubuntu/HexDom/tmp/cube/particles_" + to_string(i) + ".vtk", debug_points[i]);
-    }
+    // for (int i = 0; i < debug_points.size(); i++) {
+    //     write_vtk_points("/home/ubuntu/HexDom/tmp/cube/particles_" + to_string(i) + ".vtk", debug_points[i]);
+    // }
     
     if (argc == 6) {
         cout << "write " << surface.size() << " points to " << argv[4] << endl;

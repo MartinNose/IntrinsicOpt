@@ -48,7 +48,9 @@ struct Particle {
         flag = _flag;
     }
     pair<int, int> get_edge() const {
-        assert(flag == EDGE && "get_edge: particle must on an edge");
+        if (!(flag == EDGE)) {
+            cerr << "get_edge: particle must on an edge" << endl;
+        } 
         int ei = int(bc[2]);
         int ej = int(bc[3]);
         return make_pair(ei, ej);
@@ -59,7 +61,9 @@ struct Particle {
         return bc[0] * vi + bc[1] * vj;
     }
     Vector3d get_vertex() const {
-        assert(flag == POINT && "get_vertex: particle must be a fixed point");
+        if (!(flag == POINT)) {
+            cerr << "get_vertex: particle must be a fixed point" << endl;
+        } 
         Vector3d v;
         v[0] = bc[0];
         v[1] = bc[1];
@@ -118,7 +122,10 @@ public:
             if (index[0] > index[1]) {
                 int tmp = index[0]; index[0] = index[1]; index[1] = tmp;
             }
-            assert(edge_tri_map.find(index) != edge_tri_map.end());
+            if (!(edge_tri_map.find(index) != edge_tri_map.end())) {
+                cerr << "false edge_tri_map" << endl;
+                exit(-1);
+            };
             auto t = edge_tri_map[index];
             if (get<2>(t)) {
                 return vector<int>{-1};
@@ -126,14 +133,21 @@ public:
                 return vector<int>{get<0>(t) == face_id ? get<1>(t) : get<0>(t)};
             }
         } else if (index.size() == 1) {
-            assert(vertex_adj_faces.find(index[0]) != vertex_adj_faces.end());
+            if (!(vertex_adj_faces.find(index[0]) != vertex_adj_faces.end())) {
+                cerr << "false v adj f map" << endl;
+                exit(-1);
+            }
             return vertex_adj_faces[index[0]];
         }
-        assert(false && "error request");
+        cerr << "findAdjFace: error request" << endl;
+        exit(-1);
     }
 
     vector<int> findAdjacentCell(int cell_id, vector<int> index) {
-        assert(!index.empty());
+        if (index.empty()) {
+            cerr << "findAdjCell: error request" << endl;
+            exit(-1);
+        }
         sort(index.begin(), index.end());
         vector<int> result;
         if (index.size() == 3) {
@@ -193,7 +207,8 @@ public:
             cut = v2 + t * (v0 - v2);
             return;
         }
-        assert(false && "cut not found");
+        cerr << "cut not found" << endl;
+        exit(-1);
     }
 
     // Get the theta of a and b with sign
@@ -257,7 +272,10 @@ public:
                                      v0_new.transpose(), v1_new.transpose(),
                                      v2_new.transpose(), v3_new.transpose(),
                                      temp_bc);
-        assert(temp_bc.minCoeff() > -BARYCENTRIC_BOUND);
+        if (!(temp_bc.minCoeff() > -BARYCENTRIC_BOUND)) {
+            cerr << "invalid bc" << endl;
+            exit(-1);
+        }
         bc = temp_bc;
         return new_cell;
     }
@@ -278,7 +296,11 @@ public:
                 if (candi_tet[j] == f0 || candi_tet[j] == f1) continue;
                 extra[extra_cnt++] = V.row(candi_tet[j]);
             }
-            assert(extra_cnt == 2);
+            if (extra_cnt != 2) {
+                cerr << "wrong case" << endl;
+                exit(-1);
+            }
+            
             Vector3d n0 = (edge[1] - edge[0]).cross(extra[0] - edge[1]);
             Vector3d n1 = (edge[1] - edge[0]).cross(extra[1] - edge[1]);
             Vector3d n2 = (edge[1] - edge[0]).cross(end_point - edge[1]);
@@ -315,6 +337,7 @@ public:
     inline bool traceStep(Scalar distance, int last_cell, Particle<Scalar> &start, double direction, Scalar total, Vector3<Scalar> ff, F &callback) {
         if (start.bc.minCoeff() < -BARYCENTRIC_BOUND) {
             cerr << "Invalid bc" << start.bc << endl;
+            exit(-1);
             assert(start.bc.minCoeff() >= -BARYCENTRIC_BOUND);
         };
         int cur_cell = start.cell_id;
@@ -366,8 +389,6 @@ public:
         Scalar b1(endPointB(1));
         Scalar b2(endPointB(2));
 
-        Matrix<double, Dynamic, 3> temp(1,3);
-
         if (endPointB.minCoeff() >= -BARYCENTRIC_BOUND) { // the target point is inside the triangle
             start.bc << endPointB;
             callback(start, distance, total + distance);
@@ -390,7 +411,10 @@ public:
                 double u, t;
                 Vector3d e0 = V.row(edge[0]);
                 Vector3d e1 = V.row(edge[1]);
-                assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, e0, e1 - e0, u, t, 1e-10));
+                if (!igl::segment_segment_intersect(startPoint, endPoint - startPoint, e0, e1 - e0, u, t, 1e-10)) {
+                    cerr << "wrong case" << endl;
+                    exit(-1);
+                }
                 start.bc.resize(1, 4);
                 start.bc[0] = 1 - t;
                 start.bc[1] = t;
@@ -402,7 +426,10 @@ public:
                 Vector3d v0 = V.row(cell_i[pos_idx[0]]);
                 Vector3d v1 = V.row(cell_i[pos_idx[1]]);
                 double u, t;
-                assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, 1e-10));
+                if (!igl::segment_segment_intersect(startPoint, endPoint - startPoint, v0, v1 - v0, u, t, 1e-10)) {
+                    cerr << "wrong case" << endl;
+                    exit(-1);
+                }
                 Vector3d joint = v0 + t * (v1 - v0);
                 start.cell_id = res[0];
                 Vector3i new_tri = T.row(res[0]);
@@ -520,7 +547,10 @@ public:
                     vector<int> res = findAdjacentFace(start.cell_id, edge);
                     if (res[0] == -1) { // SHARP EDGE
                         double u, t;
-                        assert(igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, 1e-10));
+                        if (!igl::segment_segment_intersect(startPoint, endPoint - startPoint, v, v1 - v, u, t, 1e-10)) {
+                            cerr << "wrong case" << endl;
+                            exit(-1);
+                        }
                         start.bc.resize(1, 4);
                         start.bc[0] = 1 - t;
                         start.bc[1] = t;
@@ -567,7 +597,8 @@ public:
                 }
             }
         }
-        assert(false && "impossible situation!");
+        cerr << "impossible situation!" << endl;
+        exit(-1);
     }
 
     Matrix3d last_ff;
