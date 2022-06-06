@@ -6,3 +6,4 @@ dataset
 .idea
 cmake-build-debug
 DartConfiguration.tcl
+release
